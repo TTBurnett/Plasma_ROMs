@@ -6,6 +6,7 @@ import matplotlib.animation as animation
 import numpy as np
 import constants as const
 import romtools
+from scipy import sparse
 
 class Snapshot:
     def __init__(self, time, px, pv, L, x_min):
@@ -25,7 +26,7 @@ def get_moments(px, pv, node_positions, weight_factor):
         moments[2, i] = np.sum((pv**2)[idx])*const.m_electron*weight_factor/dx
     return moments
 
-def spline(x_ref, order: int):
+def spline(x_ref, order: int = 1):
     match order:
         case 0:
             return np.where(x_ref < 1, 1 - x_ref, 0)
@@ -36,9 +37,7 @@ def spline(x_ref, order: int):
         case _:
             raise ValueError(f'Invalid spline order {order}. [0, 1] are supported.')
         
-def construct_measurments(max_idx, percent_hyperreduction, hyperreduction_algorithm: Literal['Gappy', 'DEIM'], u):
-    n_hyperreduction_points = round(1e-2*percent_hyperreduction*max_idx)
-
+def construct_measurments(max_idx, n_hyperreduction_points, hyperreduction_algorithm: Literal['Gappy', 'DEIM'], u):
     match hyperreduction_algorithm:
         case 'Gappy':
             measurement_idx = np.random.choice(range(max_idx), size=n_hyperreduction_points, replace=False)
@@ -110,20 +109,25 @@ class PodSimulation:
     def get_distance(self, px, nx):
         px_domain = (px - self.x_domain[0]) % self.L + self.x_domain[0]
         return 0.5*self.L - np.abs(np.abs(px_domain - nx) - 0.5*self.L)
+    
+    def get_flat_interpolation_matrix_T(self, x):
+        n_idx = np.repeat(((x - self.x_domain[0]) % self.L) // self.dx, 3).astype(int) + self.n_idx_tiling
+        n_idx %= self.n_nodes
+        interp_vals = spline(self.get_distance(x[self.p_idx], self.node_positions[n_idx])/self.dx)
+        return sparse.csr_array((interp_vals, (self.p_idx*self.n_nodes+n_idx,)), shape=(self.n_hyperreduction_points*self.n_nodes,))
 
     def push_particles(self):
         self.px += self.pv*self.dt
 
     def interpolate_particles_to_field(self):
-        x_ref = self.get_distance(self.psi_p[self.particle_measurement_idx] @ self.px, self.node_positions.reshape(-1, 1))/self.dx
-        self.reduced_interpolation = spline(x_ref, self.particle_order)
-        self.nq = self.reduced_interpolation @ self.reduced_pq + self.bg_charge_density*self.dx
+        self.reduced_interpolation_T = self.get_flat_interpolation_matrix_T(self.PT_psi_p @ self.px)
+        self.nq = self.reduced_interpolation_T @ self.reduced_pq + self.bg_charge_density*self.dx
 
     def update_electric_field(self):
         self.ne_field = self.electric_field_matrix @ self.nq
 
     def interpolate_field_to_particles(self):
-        self.pe_field = self.unhyperreduce_pe_field @ self.reduced_interpolation.T @ self.ne_field
+        self.pe_field = (self.unhyperreduce_pe_field.reshape(-1, self.n_hyperreduction_points*self.n_nodes) @ self.reduced_interpolation_T).reshape(-1, self.n_nodes) @ self.ne_field
 
     def accelerate_particles(self):
         self.pv += const.q_over_m*self.dt*self.pe_field
@@ -140,14 +144,19 @@ class PodSimulation:
             hyperreduction_algorithm: Literal['Gappy', 'DEIM'] = 'Gappy', type: Literal['PSD', 'Full'] = 'PSD', save_snapshots=True):
         match(type):
             case 'PSD':
+                n_interpolation_modes = n_particle_modes*2
                 self.psi_p  = romtools.get_basis_for_all(n_particle_modes, self.px_snapshots, self.pv_snapshots)
-                psi_interpolation = romtools.get_pod_basis(self.interpolation_transpose_snapshots, n_particle_modes*self.n_nodes)
+                psi_interpolation = romtools.get_pod_basis(self.interpolation_transpose_snapshots, n_interpolation_modes)
+                psi_interpolation_tensor = psi_interpolation.T.reshape(n_interpolation_modes, self.n_particles, self.n_nodes).transpose(1, 2, 0) #np x nn x nm
 
-                self.particle_measurement_idx = construct_measurments(self.n_particles, percent_hyperreduction_points, hyperreduction_algorithm, self.psi_p)
-                interpolation_measurement_idx = np.repeat(self.particle_measurement_idx*self.n_nodes, self.n_nodes) + np.tile(np.arange(self.n_nodes), self.particle_measurement_idx.shape[0])
-                unhyperreduction = psi_interpolation @ np.linalg.pinv(psi_interpolation[interpolation_measurement_idx])
-                self.unhyperreduce_pe_field = self.psi_p.T @ unhyperreduction
-                self.reduced_pq = unhyperreduction.T @ (const.q_electron*self.weight_factor*np.ones((self.n_particles)))
+                self.n_hyperreduction_points = round(1e-2*percent_hyperreduction_points*self.n_particles)
+                particle_measurement_idx = construct_measurments(self.n_particles, self.n_hyperreduction_points, hyperreduction_algorithm, self.psi_p)
+                interpolation_measurement_idx = np.repeat(particle_measurement_idx*self.n_nodes, self.n_nodes) + np.tile(np.arange(self.n_nodes), self.n_hyperreduction_points)
+                psi_interpolation_psuedo_inv =  np.linalg.pinv(psi_interpolation[interpolation_measurement_idx])
+                self.unhyperreduce_pe_field = np.einsum('rp,pnm,mk->rnk', self.psi_p.T, psi_interpolation_tensor, psi_interpolation_psuedo_inv, optimize=True)
+                pq = const.q_electron*self.weight_factor*np.ones((self.n_particles))
+                self.reduced_pq = np.einsum('km,mnp,p->kn', psi_interpolation_psuedo_inv.T, psi_interpolation_tensor.transpose(2, 1, 0), pq, optimize=True)
+                self.PT_psi_p = self.psi_p[particle_measurement_idx]
 
             case 'Full':
                 self.psi_nq = np.identity(self.n_nodes)
@@ -159,6 +168,10 @@ class PodSimulation:
         # Set up px and pv
         self.px = self.psi_p.T @ self.px_snapshots[:, 0]
         self.pv = self.psi_p.T @ self.pv_snapshots[:, 0]
+
+        # Set up vectors
+        self.n_idx_tiling = np.tile([-1, 0, 1], self.n_hyperreduction_points)
+        self.p_idx = np.repeat(np.arange(self.n_hyperreduction_points), 3)
 
         # Set up operators
         A = np.zeros((self.n_nodes, self.n_nodes))

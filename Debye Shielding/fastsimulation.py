@@ -69,7 +69,7 @@ class Simulation:
         n_idx = np.repeat(((x - self.x_domain[0]) % self.L) // self.dx, 3).astype(int) + self.n_idx_tiling
         n_idx %= self.n_nodes
         interp_vals = spline(self.get_distance(x[self.p_idx], self.node_positions[n_idx])/self.dx)
-        return sparse.csr_matrix((interp_vals, (n_idx, self.p_idx)), shape=(self.n_nodes, self.n_particles))
+        return sparse.csr_array((interp_vals, (n_idx, self.p_idx)), shape=(self.n_nodes, self.n_particles))
 
     def shift_x_to_domain(self, x):
         return (x - self.x_domain[0]) % self.L + self.x_domain[0]
@@ -83,7 +83,7 @@ class Simulation:
 
     def interpolate_particles_to_field(self):
         self.interpolation = self.get_interpolation_matrix(self.px)
-        self.nq = const.q_electron*self.weight_factor*self.interpolation.sum(axis=1).A.ravel() + self.bg_charge_density*self.dx
+        self.nq = const.q_electron*self.weight_factor*self.interpolation.sum(axis=1) + self.bg_charge_density*self.dx
 
     def update_electric_field(self):
         self.ne_field = self.electric_field_matrix @ self.nq

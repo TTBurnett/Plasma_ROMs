@@ -49,7 +49,7 @@ if __name__ == "__main__":
     )
 
     n_particle_modes = 250
-    percent_hyperreduction_points = 6 #%
+    percent_hyperreduction_points = 1 #%
     sim.run(n_particle_modes, percent_hyperreduction_points=percent_hyperreduction_points,
              hyperreduction_algorithm='DEIM')
     sim.show_snapshots(fps=10, save_animation=False,
