@@ -1,0 +1,54 @@
+-------------------------POD Stacked 2 Modes-------------------------
+Mean Relative Error: 0.00446
+Relative Error Curve Fit Coefficients: [8.91e-06 1.68e-06]
+Mean Hamiltonian: 1.63e-05
+Hamiltionian Curve Fit Coefficients: [3.1e-08 8.41e-07]
+
+-------------------------POD Stacked 5 Modes-------------------------
+Mean Relative Error: 1.42e+148
+Relative Error Curve Fit Coefficients: [8.45e+145 -2.81e+148]
+Mean Hamiltonian: 1.84e+298
+Hamiltionian Curve Fit Coefficients: [1.1e+296 -3.66e+298]
+
+-------------------------POD Stacked 10 Modes-------------------------
+Mean Relative Error: 8.92e+115
+Relative Error Curve Fit Coefficients: [5.32e+113 -1.77e+116]
+Mean Hamiltonian: 1.27e+234
+Hamiltionian Curve Fit Coefficients: [7.58e+231 -2.52e+234]
+
+-------------------------POD 2 Modes-------------------------
+Mean Relative Error: 0.000145
+Relative Error Curve Fit Coefficients: [2.9e-07 5.5e-08]
+Mean Hamiltonian: 2.12e-09
+Hamiltionian Curve Fit Coefficients: [4.24e-12 7.59e-16]
+
+-------------------------POD 5 Modes-------------------------
+Mean Relative Error: 0.000145
+Relative Error Curve Fit Coefficients: [2.9e-07 5.5e-08]
+Mean Hamiltonian: 2.12e-09
+Hamiltionian Curve Fit Coefficients: [4.24e-12 7.58e-16]
+
+-------------------------POD 10 Modes-------------------------
+Mean Relative Error: 0.000145
+Relative Error Curve Fit Coefficients: [2.9e-07 5.5e-08]
+Mean Hamiltonian: 2.12e-09
+Hamiltionian Curve Fit Coefficients: [4.24e-12 7.6e-16]
+
+-------------------------PSD 2 Modes-------------------------
+Mean Relative Error: 0.000145
+Relative Error Curve Fit Coefficients: [2.9e-07 5.5e-08]
+Mean Hamiltonian: 2.35e-09
+Hamiltionian Curve Fit Coefficients: [4.7e-12 5.01e-16]
+
+-------------------------PSD 5 Modes-------------------------
+Mean Relative Error: 0.000145
+Relative Error Curve Fit Coefficients: [2.9e-07 5.5e-08]
+Mean Hamiltonian: 2.35e-09
+Hamiltionian Curve Fit Coefficients: [4.7e-12 5.01e-16]
+
+-------------------------PSD 10 Modes-------------------------
+Mean Relative Error: 0.000145
+Relative Error Curve Fit Coefficients: [2.9e-07 5.5e-08]
+Mean Hamiltonian: 2.35e-09
+Hamiltionian Curve Fit Coefficients: [4.7e-12 5.02e-16]
+
