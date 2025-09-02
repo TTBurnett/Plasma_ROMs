@@ -7,14 +7,10 @@ import time
 from scipy import sparse
 
 class Snapshot:
-    def __init__(self, time, px, pv, pe_field, nq, ne_field, interpolation):
+    def __init__(self, time, px, pv):
         self.time = time
         self.x = px
         self.v = pv
-        self.pe_field = pe_field
-        self.nq = nq
-        self.ne_field = ne_field
-        self.interpolation = interpolation
 
 def spline(x_ref, order: int = 1):
     match order:
@@ -134,7 +130,7 @@ class Simulation:
         print(f'Elapsed time: {time.perf_counter() - start:.4f} seconds')
 
     def save_snapshot(self):
-        self.snapshots.append(Snapshot(self.time, self.px.copy(), self.pv.copy(), self.pe_field.copy(), self.nq.copy(), self.ne_field.copy(), self.interpolation.toarray().flatten()))
+        self.snapshots.append(Snapshot(self.time, self.px.copy(), self.pv.copy()))
 
     def show_snapshots(self, fps=10, save_animation=False, filename='PIC_simulation', repeat=True, show_moments=True, show_cells=False):
         print('Generating animation...')
@@ -199,19 +195,10 @@ class Simulation:
     def save_snapshots_to_csv(self, filename):
         print(f'Saving to {filename}...')
         particle_list = []
-        node_list = []
-        interpolation_list = []
         for s in self.snapshots:
-            particle_list.append(np.concat((s.x, s.v, s.pe_field)))
-            node_list.append(np.concat((s.nq, s.ne_field)))
-            interpolation_list.append(s.interpolation)
+            particle_list.append(np.concat((s.x, s.v)))
         particle_array = np.column_stack(particle_list)
-        node_array = np.column_stack(node_list)
-        interpolation_array = np.column_stack(interpolation_list)
         np.savetxt(f'{filename}_particles.csv', particle_array, delimiter=',')
-        np.savetxt(f'{filename}_nodes.csv', node_array, delimiter=',')
-        np.savetxt(f'{filename}_node_positions.csv', self.node_positions, delimiter=',')
-        np.savetxt(f'{filename}_interpolations.csv', interpolation_array, delimiter=',')
         print('Done!')
 
     def show_integrated_moments(self, save=False, filename='Integrated Moments'):

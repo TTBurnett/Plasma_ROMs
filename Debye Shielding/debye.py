@@ -3,8 +3,8 @@ from fastsimulation import Simulation
 import constants
 
 if __name__ == "__main__":
-    n_cells = 50
-    n_particles_per_cell = 50
+    n_cells = 64
+    n_particles_per_cell = 100
 
     n0 = 1e15
     Te = 10000000
@@ -35,7 +35,7 @@ if __name__ == "__main__":
         x_domain=(0, L),
         v_domain=(-20*v0, 20*v0),
         background_charge_density=background_charge_density,
-        snapshot_interval=2
+        snapshot_interval=3
     )
     
     filename = f'debye_shielding_{n_cells}c{n_particles_per_cell}ppc'
@@ -43,4 +43,4 @@ if __name__ == "__main__":
     sim.run()
     sim.show_integrated_moments(save=True, filename=f'{filename}_moments')
     sim.save_snapshots_to_csv(filename)
-    sim.show_snapshots(fps=10, save_animation=False, filename=filename, show_moments=True)
+    sim.show_snapshots(fps=15, save_animation=False, filename=filename, show_moments=True)
