@@ -60,7 +60,7 @@ class Simulation:
         px = self.shift_x_to_domain(px)
         moments = np.zeros((3, self.node_positions.shape[0]))
         interpolation = self.get_interpolation_matrix(px)
-        moments[0, :] = np.sum(interpolation, axis=1).A.ravel()*const.m_electron*self.weight_factor/self.dx
+        moments[0, :] = np.sum(interpolation, axis=1).ravel()*const.m_electron*self.weight_factor/self.dx
         moments[1, :] = (interpolation @ pv)*const.m_electron*self.weight_factor/self.dx
         moments[2, :] = (interpolation @ pv**2)*0.5*const.m_electron*self.weight_factor/self.dx
         return moments
@@ -226,4 +226,14 @@ class Simulation:
         plt.xlabel('x (m)')
         if save:
             plt.savefig(filename)
+        plt.show()
+        
+    def plot_fastest_particle_trajectory(self):
+        v_avg = np.array([s.v for s in self.snapshots]).sum(axis=0)
+        idx = np.argmax(v_avg)
+        x = [s.x[idx] for s in self.snapshots]
+        t = [s.time for s in self.snapshots]
+        plt.plot(t, x)
+        plt.xlabel('t (s)')
+        plt.ylabel('x (m)')
         plt.show()

@@ -3,8 +3,8 @@ from fastsimulation import Simulation
 import constants
 
 if __name__ == "__main__":
-    n_cells = 64
-    n_particles_per_cell = 150
+    n_cells = 50
+    n_particles_per_cell = 50
 
     n0 = 1e15
     Te = 10000000
@@ -43,4 +43,4 @@ if __name__ == "__main__":
     sim.run()
     sim.show_integrated_moments(save=True, filename=f'{filename}_moments')
     sim.save_snapshots_to_csv(filename)
-    sim.show_snapshots(fps=10, save_animation=True, filename=filename, show_moments=True)
+    sim.show_snapshots(fps=10, save_animation=False, filename=filename, show_moments=True)
