@@ -132,6 +132,7 @@ class SymplecticNN(nn.Module):
             return torch.row_stack(x), torch.row_stack(v)
     
     def __init__(self, autoencoder: SymplecticAutoencoder, flow_map: HenonNet):
+        super().__init__()
         self.n_particles = autoencoder.n_particles
         self.autoencoder = autoencoder
         self.flow_map = flow_map
@@ -146,6 +147,7 @@ class SymplecticNN(nn.Module):
         return SymplecticNN.TrainingOutputs(x_hat, v_hat)
     
     def eval_forward(self, x0, v0, trajectory_length):
+        print('nex')
         x = torch.zeros((trajectory_length, x0.shape[0]))
         v = torch.zeros_like(x)
         y, w = self.autoencoder.encode(x0, v0)
