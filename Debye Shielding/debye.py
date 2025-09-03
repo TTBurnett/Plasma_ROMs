@@ -41,6 +41,7 @@ if __name__ == "__main__":
     filename = f'debye_shielding_{n_cells}c{n_particles_per_cell}ppc'
 
     sim.run()
+    sim.plot_fastest_particle_trajectory()
     sim.show_integrated_moments(save=True, filename=f'{filename}_moments')
     sim.save_snapshots_to_csv(filename)
     sim.show_snapshots(fps=15, save_animation=False, filename=filename, show_moments=True)

@@ -138,16 +138,12 @@ class SymplecticNN(nn.Module):
         self.flow_map = flow_map
         
     def train_forward(self, x, v, unroll_length=5):
-        output = torch.tensor([torch.hstack(self.eval_forward(xi, vi, trajectory_length=unroll_length)) for xi, vi in zip(x[:-unroll_length+1], v[:-unroll_length+1])])
-        print(output.shape)
+        output = torch.stack([torch.hstack(self.eval_forward(xi, vi, trajectory_length=unroll_length)) for xi, vi in zip(x[:-unroll_length+1], v[:-unroll_length+1])])
         x_hat = output[:, :, :self.n_particles]
         v_hat = output[:, :, self.n_particles:]
-        print(x_hat.shape)
-        print(v_hat.shape)
         return SymplecticNN.TrainingOutputs(x_hat, v_hat)
     
     def eval_forward(self, x0, v0, trajectory_length):
-        print('nex')
         x = torch.zeros((trajectory_length, x0.shape[0]))
         v = torch.zeros_like(x)
         y, w = self.autoencoder.encode(x0, v0)

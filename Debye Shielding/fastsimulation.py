@@ -76,6 +76,7 @@ class Simulation:
 
     def push_particles(self):
         self.px += self.pv*self.dt
+        self.px = self.shift_x_to_domain(self.px)
 
     def interpolate_particles_to_field(self):
         self.interpolation = self.get_interpolation_matrix(self.px)
