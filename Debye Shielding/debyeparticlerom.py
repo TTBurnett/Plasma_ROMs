@@ -3,7 +3,7 @@ from particleromsimulation import RomSimulation
 import constants
 
 if __name__ == "__main__":
-    n_cells = 200
+    n_cells = 64
     n_particles_per_cell = 100
 
     n0 = 1e15
@@ -24,18 +24,16 @@ if __name__ == "__main__":
         return np.exp(-v**2/(2*v_T**2))/(np.sqrt(2*np.pi)*v_T*L)
 
     dt = 0.05*inv_w_pe
-    end_time = dt*20e2
+    end_time = dt*2e2
 
     print('Loading snapshots...')
     filename = f'debye_shielding_{n_cells}c{n_particles_per_cell}ppc'
-    node_snapshots = np.loadtxt(f'{filename}_nodes.csv', dtype=float, delimiter=',')
     particle_snapshots = np.loadtxt(f'{filename}_particles.csv', dtype=float, delimiter=',')
     node_positions = np.loadtxt(f'{filename}_node_positions.csv', dtype=float, delimiter=',')
 
     print('Setting up simulation...')
     sim = RomSimulation(
         particle_snapshots=particle_snapshots,
-        node_snapshots=node_snapshots,
         node_positions=node_positions,
         dt=dt, end_time=end_time,
         x_domain=(0, L),
@@ -43,12 +41,14 @@ if __name__ == "__main__":
         background_charge_density=background_charge_density,
         particle_weight_factor=weight_factor,
         particle_order=1,
-        snapshot_interval=2
+        snapshot_interval=3
     )
     
-    n_particle_modes = 250
+    n_particle_modes = 400
     pod_type = 'PSD'
+    # sim.show_singular_values()
+    # sim.show_projection_error_function(max=500, step=20)
     sim.run(n_particle_modes, pod_type=pod_type)
-    sim.show_snapshots(fps=10, save_animation=False,
-                       filename=f'{filename}_particle_rom_{pod_type}_{n_particle_modes}pm')
+    sim.show_snapshots(fps=10, save_animation=True,
+                       filename=f'{filename}_particle_rom_{pod_type}_{n_particle_modes}pm', show_moments=False)
     sim.show_statistics()

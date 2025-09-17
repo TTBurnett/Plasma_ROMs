@@ -7,15 +7,16 @@ import numpy as np
 import constants as const
 import romtools
 import time
+from scipy import sparse
 
 class Snapshot:
-    def __init__(self, time, px, pv, nq, L, x_min):
+    def __init__(self, time, px, pv, nq):
         self.time = time
-        self.x = (px - x_min) % L + x_min
+        self.x = px
         self.v = pv
         self.nq = nq
 
-def spline(x_ref, order: int):
+def spline(x_ref, order: int = 1):
     match order:
         case 0:
             return np.where(x_ref < 1, 1 - x_ref, 0)
@@ -28,7 +29,7 @@ def spline(x_ref, order: int):
 
 class RomSimulation:
     def __init__(self,
-                 particle_snapshots, node_snapshots,
+                 particle_snapshots,
                  node_positions,
                  dt, end_time,
                  x_domain, v_domain,
@@ -38,12 +39,10 @@ class RomSimulation:
                  snapshot_interval = 10,
                  color_rule = None):
         self.node_positions = node_positions
-        self.n_particles = particle_snapshots.shape[0] // 3
+        self.n_particles = particle_snapshots.shape[0] // 2
         self.px_snapshots = particle_snapshots[:self.n_particles]
-        self.pv_snapshots = particle_snapshots[self.n_particles:2*self.n_particles]
-        self.pe_field_snapshots = particle_snapshots[2*self.n_particles:]
+        self.pv_snapshots = particle_snapshots[self.n_particles:]
         self.n_nodes = node_positions.shape[0]
-        self.nq_snapshots = node_snapshots[:self.n_nodes]
         self.time = 0
         self.end_time = end_time
         self.dt = dt
@@ -72,8 +71,17 @@ class RomSimulation:
         moments[2, :] = (interpolation @ pv**2)*const.m_electron*self.weight_factor/self.dx
         return moments
     
+    def get_interpolation_matrix(self, x):
+        n_idx = np.repeat(((x - self.x_domain[0]) % self.L) // self.dx, 3).astype(int) + self.n_idx_tiling
+        n_idx %= self.n_nodes
+        interp_vals = spline(self.get_distance(x[self.p_idx], self.node_positions[n_idx])/self.dx)
+        return sparse.csr_array((interp_vals, (n_idx, self.p_idx)), shape=(self.n_nodes, self.n_particles))
+
+    def shift_x_to_domain(self, x):
+        return (x - self.x_domain[0]) % self.L + self.x_domain[0]
+
     def get_distance(self, px, nx):
-        px_domain = (px - self.x_domain[0]) % self.L + self.x_domain[0]
+        px_domain = self.shift_x_to_domain(px)
         return 0.5*self.L - np.abs(np.abs(px_domain - nx) - 0.5*self.L)
 
     def push_particles(self):
@@ -81,9 +89,8 @@ class RomSimulation:
         self.px += self.v_to_x @ (self.pv*self.dt + 0.5*self.last_acceleration*self.dt**2)
 
     def interpolate_particles_to_field(self):
-        x_ref = self.get_distance(self.psi_px @ self.px, self.node_positions.reshape(-1, 1))/self.dx
-        self.interpolation = spline(x_ref, self.particle_order)
-        self.nq = const.q_electron*self.weight_factor*np.sum(self.interpolation, axis=1) + self.background_charge_density*self.dx
+        self.interpolation = self.get_interpolation_matrix(self.psi_px @ self.px)
+        self.nq = const.q_electron*self.weight_factor*self.interpolation.sum(axis=1) + self.background_charge_density*self.dx
 
     def update_electric_field(self):
         self.ne_field = self.electric_field_matrix @ self.nq
@@ -119,9 +126,11 @@ class RomSimulation:
             case _:
                 raise ValueError(f'Invalid type "{pod_type}" for modal decomposition.')
             
-        # Set up px and pv
+        # Set up vectors
         self.px = self.psi_px.T @ self.px_snapshots[:, 0]
         self.pv = self.psi_pv.T @ self.pv_snapshots[:, 0]
+        self.n_idx_tiling = np.tile([-1, 0, 1], self.n_particles)
+        self.p_idx = np.repeat(range(self.n_particles), 3)
 
         # Set up operators
         laplacian = np.zeros((self.n_nodes, self.n_nodes))
@@ -157,7 +166,7 @@ class RomSimulation:
         print(f'Elapsed time: {time.perf_counter() - start:.4f} seconds')
 
     def save_snapshot(self):
-        self.snapshots.append(Snapshot(self.time, self.psi_px @ self.px, self.psi_pv @ self.pv, self.nq, self.L, self.x_domain[0]))
+        self.snapshots.append(Snapshot(self.time, self.shift_x_to_domain(self.psi_px @ self.px), self.psi_pv @ self.pv, self.nq))
 
     def show_snapshots(self, fps=10, save_animation=False, filename='PIC_simulation', repeat=True, show_moments=True, show_cells=False):
         print('Generating animation...')

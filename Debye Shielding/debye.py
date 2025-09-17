@@ -3,8 +3,8 @@ from fastsimulation import Simulation
 import constants
 
 if __name__ == "__main__":
-    n_cells = 40
-    n_particles_per_cell = 20
+    n_cells = 64
+    n_particles_per_cell = 100
 
     n0 = 1e15
     Te = 10000000
@@ -24,7 +24,7 @@ if __name__ == "__main__":
         return np.exp(-v**2/(2*v_T**2))/(np.sqrt(2*np.pi)*v_T*L)
 
     dt = 0.05*inv_w_pe
-    end_time = dt*20e2
+    end_time = dt*2e2
     
     sim = Simulation(
         n_nodes=n_cells,
@@ -44,4 +44,4 @@ if __name__ == "__main__":
     sim.plot_fastest_particle_trajectory()
     sim.show_integrated_moments(save=True, filename=f'{filename}_moments')
     sim.save_snapshots_to_csv(filename)
-    sim.show_snapshots(fps=15, save_animation=False, filename=filename, show_moments=True)
+    sim.show_snapshots(fps=10, save_animation=True, filename=filename, show_moments=False)

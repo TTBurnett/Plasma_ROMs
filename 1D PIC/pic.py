@@ -3,8 +3,8 @@ from fastsimulation import Simulation
 import constants
 
 if __name__ == "__main__":
-    n_cells = 50
-    n_particles_per_cell = 80
+    n_cells = 64
+    n_particles_per_cell = 100
 
     n0 = 1e15
     electron_plasma_frequency = np.sqrt(n0*constants.q_electron**2 / (constants.epsilon0 * constants.m_electron))
@@ -14,7 +14,7 @@ if __name__ == "__main__":
     std_v = 0.01*constants.c
     max_v = 2.2*mean_v
     resonance = 2*np.pi*mean_v*inv_w_pe
-    max_x = resonance * 1.25
+    max_x = resonance * 1
     weight_factor = 2*max_x*n0 / (n_particles_per_cell*n_cells)
 
     def f(x, v):
@@ -44,5 +44,4 @@ if __name__ == "__main__":
     filename = f'two_stream_{n_cells}c{n_particles_per_cell}ppc'
 
     sim.run()
-    sim.save_snapshots_to_csv(filename)
-    sim.show_snapshots(fps=20, save_animation=True, filename=filename, show_moments=True)
+    sim.show_snapshots(fps=20, save_animation=False, filename=filename, show_moments=False)

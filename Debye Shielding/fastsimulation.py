@@ -76,7 +76,7 @@ class Simulation:
 
     def push_particles(self):
         self.px += self.pv*self.dt
-        self.px = self.shift_x_to_domain(self.px)
+        #self.px = self.shift_x_to_domain(self.px)
 
     def interpolate_particles_to_field(self):
         self.interpolation = self.get_interpolation_matrix(self.px)
@@ -200,6 +200,7 @@ class Simulation:
             particle_list.append(np.concat((s.x, s.v)))
         particle_array = np.column_stack(particle_list)
         np.savetxt(f'{filename}_particles.csv', particle_array, delimiter=',')
+        np.savetxt(f'{filename}_node_positions.csv', self.node_positions, delimiter=',')
         print('Done!')
 
     def show_integrated_moments(self, save=False, filename='Integrated Moments'):
