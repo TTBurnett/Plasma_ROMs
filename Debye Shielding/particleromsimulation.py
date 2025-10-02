@@ -10,11 +10,11 @@ import time
 from scipy import sparse
 
 class Snapshot:
-    def __init__(self, time, px, pv, nq):
+    def __init__(self, time, px, pv, nrho):
         self.time = time
         self.x = px
         self.v = pv
-        self.nq = nq
+        self.nrho = nrho
 
 def spline(x_ref, order: int = 1):
     match order:
@@ -85,21 +85,21 @@ class RomSimulation:
         return 0.5*self.L - np.abs(np.abs(px_domain - nx) - 0.5*self.L)
 
     def push_particles(self):
-        self.last_acceleration = const.q_over_m*self.pe_field
+        self.last_acceleration = -const.q_over_m*self.pe_field
         self.px += self.v_to_x @ (self.pv*self.dt + 0.5*self.last_acceleration*self.dt**2)
 
     def interpolate_particles_to_field(self):
         self.interpolation = self.get_interpolation_matrix(self.psi_px @ self.px)
-        self.nq = const.q_electron*self.weight_factor*self.interpolation.sum(axis=1) + self.background_charge_density*self.dx
+        self.nrho = -const.q_electron*self.weight_factor*self.interpolation.sum(axis=1)/self.dx**3 + self.background_charge_density
 
     def update_electric_field(self):
-        self.ne_field = self.electric_field_matrix @ self.nq
+        self.ne_field = self.electric_field_matrix @ self.nrho
 
     def interpolate_field_to_particles(self):
         self.pe_field = self.psi_pv.T @ self.interpolation.T @ self.ne_field
 
     def accelerate_particles(self):
-        self.pv += 0.5*(const.q_over_m*self.pe_field+self.last_acceleration)*self.dt
+        self.pv += 0.5*(-const.q_over_m*self.pe_field+self.last_acceleration)*self.dt
 
     def update(self):
         self.push_particles()
@@ -141,14 +141,14 @@ class RomSimulation:
                 laplacian[i, i+1] = 1
             else:
                 laplacian[i, 0] = 1
-        self.inv_laplacian = np.linalg.pinv(laplacian)
+        self.inv_laplacian = -self.dx**2 * np.linalg.pinv(laplacian) / const.epsilon0
         B = np.zeros((self.n_nodes, self.n_nodes))
         for i in range(self.n_nodes-1):
             B[i, i+1] = 1
             B[i, i-1] = -1
         B[-1, 0] = 1
         B[-1, -2] = -1
-        self.electric_field_matrix = 0.5 * B @ self.inv_laplacian / const.epsilon0
+        self.electric_field_matrix = -(0.5 / self.dx) * B @ self.inv_laplacian
 
         # Take initial condition snapshot
         self.interpolate_particles_to_field()
@@ -166,7 +166,7 @@ class RomSimulation:
         print(f'Elapsed time: {time.perf_counter() - start:.4f} seconds')
 
     def save_snapshot(self):
-        self.snapshots.append(Snapshot(self.time, self.shift_x_to_domain(self.psi_px @ self.px), self.psi_pv @ self.pv, self.nq))
+        self.snapshots.append(Snapshot(self.time, self.shift_x_to_domain(self.psi_px @ self.px), self.psi_pv @ self.pv, self.nrho))
 
     def show_snapshots(self, fps=10, save_animation=False, filename='PIC_simulation', repeat=True, show_moments=True, show_cells=False):
         print('Generating animation...')
@@ -304,8 +304,8 @@ class RomSimulation:
         total_energy = np.zeros(n)
         t = np.zeros(n)
         for i, s in enumerate(self.snapshots):
-            electric_potential = self.inv_laplacian @ -s.nq / const.epsilon0
-            electric_potential_energy[i] = 0.5*np.sum(electric_potential*s.nq)*self.dx
+            electric_potential = self.inv_laplacian @ s.nrho
+            electric_potential_energy[i] = 0.5*np.sum(electric_potential*s.nrho)*self.dx**3
             kinetic_energy[i] = 0.5*const.m_electron*self.weight_factor*np.sum(s.v**2)
             total_energy[i] = electric_potential_energy[i] + kinetic_energy[i]
             t[i] = s.time

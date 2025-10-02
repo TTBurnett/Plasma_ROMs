@@ -5,12 +5,14 @@ import constants as const
 from pdfsampler import PdfSampler
 import time
 from scipy import sparse
+from scipy.special import erf
 
 class Snapshot:
-    def __init__(self, time, px, pv):
+    def __init__(self, time, px, pv, phi):
         self.time = time
         self.x = px
         self.v = pv
+        self.phi = phi
 
 def spline(x_ref, order: int = 1):
     match order:
@@ -80,16 +82,16 @@ class Simulation:
 
     def interpolate_particles_to_field(self):
         self.interpolation = self.get_interpolation_matrix(self.px)
-        self.nq = const.q_electron*self.weight_factor*self.interpolation.sum(axis=1) + self.bg_charge_density*self.dx
+        self.nrho = -const.q_electron*self.weight_factor*self.interpolation.sum(axis=1)/self.dx**3 + self.bg_charge_density
 
     def update_electric_field(self):
-        self.ne_field = self.electric_field_matrix @ self.nq
+        self.ne_field = self.electric_field_matrix @ self.nrho
 
     def interpolate_field_to_particles(self):
         self.pe_field = self.interpolation.T @ self.ne_field
 
     def accelerate_particles(self):
-        self.pv += const.q_over_m*self.dt*self.pe_field
+        self.pv += -const.q_over_m*self.dt*self.pe_field
 
     def update(self):
         self.push_particles()
@@ -119,7 +121,8 @@ class Simulation:
             B[i, i-1] = -1
         B[-1, 0] = 1
         B[-1, -2] = -1
-        self.electric_field_matrix = 0.5 * B @ np.linalg.pinv(A) / const.epsilon0
+        self.phi_matrix = -self.dx**2 * np.linalg.pinv(A) / const.epsilon0
+        self.electric_field_matrix = -(0.5 / self.dx) * B @ self.phi_matrix
 
         start = time.perf_counter()
         while self.time < self.end_time:
@@ -131,7 +134,44 @@ class Simulation:
         print(f'Elapsed time: {time.perf_counter() - start:.4f} seconds')
 
     def save_snapshot(self):
-        self.snapshots.append(Snapshot(self.time, self.px.copy(), self.pv.copy()))
+        self.snapshots.append(Snapshot(self.time, self.px.copy(), self.pv.copy(), self.phi_matrix @ self.nrho))
+
+    def show_potential(self, n0, debye_length, fps=10, save_animation=False, filename='Charge_simulation', repeat=True):
+        print('Generating animation...')
+        fig = plt.figure(figsize=(10, 5))
+        prefactor = -debye_length*const.q_electron*n0/(2*const.epsilon0)
+        x = -0.5*np.abs(self.node_positions-0.5*self.L)/debye_length
+        a = 0.5*(0.1*self.L/debye_length)**2
+        theory = prefactor*(4*debye_length+self.L*np.exp(a+2*x)*(erf((x+a)/np.sqrt(a))-1-np.exp(-4*x)*(erf((x-a)/np.sqrt(a))+1)))
+        
+        max_phi = np.array([s.phi for s in self.snapshots]).max()
+        min_phi = np.array([s.phi for s in self.snapshots]).min()
+        phi_domain = [min_phi, max_phi]
+
+        def show(ts):
+            t_idx, s = ts
+
+            fig.clear()
+            plt.plot(self.node_positions, s.phi, label='Simulated')
+            plt.title(f'Time = {s.time: .3g}')
+            plt.ylabel(r'Electric Potential ($N/C$)')
+            plt.xlabel('x (m)')
+            plt.ylim(*phi_domain)
+            plt.xlim(self.x_domain)
+            
+            # Theory
+            plt.plot(self.node_positions, theory, linestyle='--', color='k', label='Theory')
+            plt.legend()
+
+        show((0, self.snapshots[0]))
+        ani = animation.FuncAnimation(fig=fig, func=show, frames=enumerate(self.snapshots), interval=1e3/fps, repeat=repeat)
+        if save_animation:
+            print('Saving...')
+            writer = animation.PillowWriter(fps=fps)
+            ani.save(f'{filename}.gif', writer=writer)
+        print('Displaying...')
+        plt.show()
+        print('Done!')
 
     def show_snapshots(self, fps=10, save_animation=False, filename='PIC_simulation', repeat=True, show_moments=True, show_cells=False):
         print('Generating animation...')
