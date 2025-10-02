@@ -78,10 +78,7 @@ class Simulation:
 
     def push_particles(self):
         self.px += self.pv*self.dt
-<<<<<<< HEAD:fastsimulation.py
         #self.px = self.shift_x_to_domain(self.px)
-=======
->>>>>>> 618c321 (fastsimulation.py now saves node positions for performing modulus in clustering. Clustering works fairly well for identifying well particles and free particles):Debye Shielding/fastsimulation.py
 
     def interpolate_particles_to_field(self):
         self.interpolation = self.get_interpolation_matrix(self.px)

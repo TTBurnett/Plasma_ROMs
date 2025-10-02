@@ -27,10 +27,11 @@ def show_snapshots(x, v, idx_list, x_domain, fps=10, repeat=True):
 
         ani = animation.FuncAnimation(fig=fig, func=show, frames=range(x.shape[1]), interval=1e3/fps, repeat=repeat)
         plt.show()
+        print('Done!')
 
 if __name__ == "__main__":
-    n_cells = 100
-    n_particles_per_cell = 100
+    n_cells = 64
+    n_particles_per_cell = 200
     problem = 'debye_shielding'
     
     print('Loading data...')
@@ -44,21 +45,8 @@ if __name__ == "__main__":
     px = particle_snapshots[:n_particles]
     pv = particle_snapshots[n_particles:]
     U = px + pv*1j
-    # U -= U[:, 0].reshape(-1, 1)
     U = U / np.linalg.vector_norm(U, axis=1, keepdims=True)
     x = (px - x_domain[0]) % L + x_domain[0]
-    
-    # print('Splitting in time...')
-    # # nt = px.shape[1]
-    # # window_size = 5
-    # # tr = [np.trace(cosine_similarity_distance(U[:, i-window_size:i], U[:, i:i+window_size])) for i in range(window_size, nt-window_size, window_size)]
-    # # plt.plot(tr)
-    # # plt.show()
-    # split_idx = (1+np.argmax(tr))*window_size
-    # U = U[:, split_idx:]
-    # x = x[:, split_idx:]
-    # pv = pv[:, split_idx:]
-    # print(split_idx)
     
     print('Performing clustering...')
     distances = cosine_similarity_distance(U, U)
@@ -67,7 +55,8 @@ if __name__ == "__main__":
     idx = [np.where(labels == i)[0] for i in range(np.max(labels)+1)]
     
     show_snapshots(x, pv, idx, x_domain, fps=20)
-    romtools.get_pod_basis(particle_snapshots, plot_svs=True, plot_projection_errors=True, error_step=10)
-    for i in idx:
-        romtools.get_pod_basis(px[i], plot_svs=True, plot_projection_errors=True, error_step=10)
-        romtools.get_pod_basis(pv[i], plot_svs=True, plot_projection_errors=True, error_step=10)
+    romtools.get_pod_basis(px, plot_svs=True, title='All particles x')
+    romtools.get_pod_basis(pv, plot_svs=True, title='All particles v')
+    for num_cluster, i in enumerate(idx):
+        romtools.get_pod_basis(px[i], plot_svs=True, title=f'Cluster {num_cluster+1} particles x')
+        romtools.get_pod_basis(pv[i], plot_svs=True, title=f'Cluster {num_cluster+1} particles v')

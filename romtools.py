@@ -45,7 +45,7 @@ def get_basis_for_all(n_modes, *args, show_singular_values=False, show_projectio
         plt.show()
     return psi
 
-def get_pod_basis(data, n_modes=None, random=False, plot_svs=False, n_modes_to_plot=0, plot_projection_errors=False, error_step=5):
+def get_pod_basis(data, n_modes=None, random=False, plot_svs=False, n_modes_to_plot=0, plot_projection_errors=False, error_step=5, title=None):
     if random:
         u, s, _ = randomized_svd(data, n_modes)
     else:
@@ -56,6 +56,8 @@ def get_pod_basis(data, n_modes=None, random=False, plot_svs=False, n_modes_to_p
         plt.title('Singular Value Energies')
         plt.ylabel('Cumulative Energy (%)')
         plt.xlabel('# of Modes')
+        if title:
+            plt.title(title)
         plt.show()
         if n_modes_to_plot > 0:
             plt.plot((u @ np.diag(s))[:, :n_modes_to_plot])
@@ -68,6 +70,8 @@ def get_pod_basis(data, n_modes=None, random=False, plot_svs=False, n_modes_to_p
         plt.ylabel('Normalized Error')
         plt.xlabel('# of Modes')
         plt.yscale('log')
+        if title:
+            plt.title(title)
         plt.show()
     
     return u[:, :n_modes]

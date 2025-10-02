@@ -5,19 +5,11 @@ from fastsimulation import Simulation
 import constants
 
 if __name__ == "__main__":
-<<<<<<< HEAD
     n_cells = 64
     n_particles_per_cell = 200
 
     n0 = 1e23
     Te = 1e8
-=======
-    n_cells = 100
-    n_particles_per_cell = 100
-
-    n0 = 1e15
-    Te = 2e8
->>>>>>> d50b67b (Particle clustering works very well now.)
     electron_plasma_frequency = np.sqrt(n0*constants.q_electron**2 / (constants.epsilon0 * constants.m_electron))
     inv_w_pe = 1/electron_plasma_frequency
     debye_length = np.sqrt((constants.epsilon0*constants.boltzmann*Te)/(n0*constants.q_electron**2))
@@ -41,11 +33,7 @@ if __name__ == "__main__":
         dt=dt, end_time=end_time,
         f0=f,
         x_domain=(0, L),
-<<<<<<< HEAD
         v_domain=(-10*v_T, 10*v_T),
-=======
-        v_domain=(-15*v0, 15*v0),
->>>>>>> d50b67b (Particle clustering works very well now.)
         background_charge_density=background_charge_density,
         snapshot_interval=10
     )
