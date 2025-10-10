@@ -1,5 +1,7 @@
 import numpy as np
 from particleromsimulation import RomSimulation
+import sys
+sys.path.append('..')
 import constants
 
 if __name__ == "__main__":
@@ -45,8 +47,7 @@ if __name__ == "__main__":
     n_particle_modes = 50
     pod_type = 'PSD'
     sim.show_singular_values()
-    sim.show_projection_error_function(max=200, step=10)
     sim.run(n_particle_modes, pod_type=pod_type)
-    sim.show_snapshots(fps=10, save_animation=False,
+    sim.show_snapshots(fps=15, save_animation=True,
                        filename=f'{filename}_particle_rom_{pod_type}_{n_particle_modes}pm', show_moments=False)
     sim.show_statistics()

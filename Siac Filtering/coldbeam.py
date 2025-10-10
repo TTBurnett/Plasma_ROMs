@@ -14,19 +14,20 @@ if __name__ == "__main__":
     electron_plasma_frequency = np.sqrt(n0*constants.q_electron**2 / (constants.epsilon0 * constants.m_electron))
     inv_w_pe = 1/electron_plasma_frequency
     debye_length = np.sqrt((constants.epsilon0*constants.boltzmann*Te)/(n0*constants.q_electron**2))
-    v_T = np.sqrt(constants.boltzmann*Te/constants.m_electron)
-    L = 20*debye_length
+    vT = np.sqrt(constants.boltzmann*Te/constants.m_electron)
+    vc = 10*vT
+    L = debye_length*200
     wq = 0.1*L
     xc = L/2
     weight_factor = (L/n_cells)**3*n0 / n_particles_per_cell
-    background_charge_density = lambda x: 0.5*constants.q_electron*n0*(1 + L*np.exp(-(x - xc)**2/(2*wq**2))/(wq*np.sqrt(2*np.pi)))
+    background_charge_density = lambda x: constants.q_electron*n0
  
     def f(x, v):
-        return np.exp(-v**2/(2*v_T**2))/(np.sqrt(2*np.pi)*v_T*L)
+        return np.exp(-0.5*((v-vc)/vT)**2)/(np.sqrt(2*np.pi)*vT*L)
 
-    dt = 0.005*inv_w_pe
-    end_time = dt*1e4
-    shape = filters.SplineFilter(3)
+    dt = 0.05*inv_w_pe
+    end_time = dt*1e3
+    shape = filters.SiacFilter(6, 5)
     
     sim = Simulation(
         n_nodes=n_cells,
@@ -36,15 +37,12 @@ if __name__ == "__main__":
         dt=dt, end_time=end_time,
         f0=f,
         x_domain=(0, L),
-        v_domain=(-10*v_T, 10*v_T),
+        v_domain=(0, 20*vT),
         background_charge_density=background_charge_density,
-        snapshot_interval=10
+        snapshot_interval=5
     )
     
     filename = f'debye_shielding_{n_cells}c{n_particles_per_cell}ppc'
 
     sim.run()
-    sim.save_snapshots_to_csv(filename)
-    #sim.show_potential(fps=15, n0=n0, debye_length=debye_length, save_animation=False)
-    sim.show_snapshots(fps=15, save_animation=True, filename=filename, show_moments=False)
-    sim.show_integrated_moments(save=True, filename=f'{filename}_moments')
+    sim.show_snapshots(fps=15, save_animation=False, filename=filename, show_moments=False)

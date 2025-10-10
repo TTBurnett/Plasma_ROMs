@@ -14,17 +14,6 @@ class Snapshot:
         self.v = pv
         self.phi = phi
 
-def spline(x_ref, order: int = 1):
-    match order:
-        case 0:
-            return np.where(x_ref < 1, 1 - x_ref, 0)
-        case 1:
-            conditions = [x_ref <= 0.5, x_ref < 1.5]
-            values = [0.75-x_ref**2, 0.5*(1.5-x_ref)**2]
-            return np.select(conditions, values, default=0)
-        case _:
-            raise ValueError(f'Invalid spline order {order}. [0, 1] are supported.')
-
 class Simulation:
     def __init__(self,
                  n_nodes, n_particles_per_cell,
@@ -32,6 +21,7 @@ class Simulation:
                  f0, x_domain, v_domain,
                  background_charge_density,
                  particle_weight_factor,
+                 particle_shape_function,
                  snapshot_interval = 10,
                  color_rule = None):
         self.n_nodes = n_nodes
@@ -49,6 +39,7 @@ class Simulation:
         else:
             self.colors = np.array(['c' for x in self.px])
         self.weight_factor = particle_weight_factor
+        self.shape_function = particle_shape_function
         self.node_positions = np.arange(x_domain[0]+0.5*self.dx, x_domain[1], self.dx)
         self.bg_charge_density = background_charge_density(self.node_positions)
         self.snapshot_interval = snapshot_interval
@@ -64,9 +55,9 @@ class Simulation:
         return moments
 
     def get_interpolation_matrix(self, x):
-        n_idx = np.repeat(((x - self.x_domain[0]) % self.L) // self.dx, 3).astype(int) + self.n_idx_tiling
+        n_idx = np.repeat(((x - self.x_domain[0]) % self.L) // self.dx, self.shape_function_width).astype(int) + self.n_idx_tiling
         n_idx %= self.n_nodes
-        interp_vals = spline(self.get_distance(x[self.p_idx], self.node_positions[n_idx])/self.dx)
+        interp_vals = self.shape_function(self.get_distance(x[self.p_idx], self.node_positions[n_idx])/self.dx)
         return sparse.csr_array((interp_vals, (n_idx, self.p_idx)), shape=(self.n_nodes, self.n_particles))
 
     def shift_x_to_domain(self, x):
@@ -103,8 +94,13 @@ class Simulation:
 
     def run(self, save_snapshots=True):
         # Set up vectors
-        self.n_idx_tiling = np.tile([-1, 0, 1], self.n_particles)
-        self.p_idx = np.repeat(range(self.n_particles), 3)
+        y1 = self.shape_function(np.arange(-100, 101))
+        y2 = self.shape_function(np.arange(-100.5, 101))
+        width = max(np.sum(np.abs(y1) > 0), np.sum(np.abs(y2) > 0))
+        relative_n_idx = np.arange(-(width//2), width//2 + 1, dtype=int)
+        self.shape_function_width = relative_n_idx.shape[0]
+        self.n_idx_tiling = np.tile(relative_n_idx, self.n_particles)
+        self.p_idx = np.repeat(range(self.n_particles), self.shape_function_width)
 
         # Set up operators
         A = np.zeros((self.n_nodes, self.n_nodes))
