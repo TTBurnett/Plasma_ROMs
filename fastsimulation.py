@@ -6,13 +6,15 @@ from pdfsampler import PdfSampler
 import time
 from scipy import sparse
 from scipy.special import erf
+import scipy.fft as fft
 
 class Snapshot:
-    def __init__(self, time, px, pv, phi):
+    def __init__(self, time, px, pv, phi, e_field):
         self.time = time
         self.x = px
         self.v = pv
         self.phi = phi
+        self.e_field = e_field
 
 class Simulation:
     def __init__(self,
@@ -120,6 +122,12 @@ class Simulation:
         self.phi_matrix = -self.dx**2 * np.linalg.pinv(A) / const.epsilon0
         self.electric_field_matrix = -(0.5 / self.dx) * B @ self.phi_matrix
 
+        # Take initial condition snapshot
+        self.interpolate_particles_to_field()
+        self.update_electric_field()
+        self.interpolate_field_to_particles()
+        self.save_snapshot()
+
         start = time.perf_counter()
         while self.time < self.end_time:
             self.update()
@@ -130,9 +138,9 @@ class Simulation:
         print(f'Elapsed time: {time.perf_counter() - start:.4f} seconds')
 
     def save_snapshot(self):
-        self.snapshots.append(Snapshot(self.time, self.px.copy(), self.pv.copy(), self.phi_matrix @ self.nrho))
+        self.snapshots.append(Snapshot(self.time, self.px.copy(), self.pv.copy(), self.phi_matrix @ self.nrho, self.ne_field.copy()))
 
-    def show_potential(self, n0, debye_length, fps=10, save_animation=False, filename='Charge_simulation', repeat=True):
+    def show_potential(self, n0, debye_length, fps=10, save_animation=False, filename='Electric_potential', repeat=True):
         print('Generating animation...')
         fig = plt.figure(figsize=(10, 5))
         prefactor = -debye_length*const.q_electron*n0/(2*const.epsilon0)
@@ -150,7 +158,7 @@ class Simulation:
             fig.clear()
             plt.plot(self.node_positions, s.phi, label='Simulated')
             plt.title(f'Time = {s.time: .3g}')
-            plt.ylabel(r'Electric Potential ($N/C$)')
+            plt.ylabel(r'Electric Potential ($V$)')
             plt.xlabel('x (m)')
             plt.ylim(*phi_domain)
             plt.xlim(self.x_domain)
@@ -158,6 +166,72 @@ class Simulation:
             # Theory
             plt.plot(self.node_positions, theory, linestyle='--', color='k', label='Theory')
             plt.legend()
+
+        show((0, self.snapshots[0]))
+        ani = animation.FuncAnimation(fig=fig, func=show, frames=enumerate(self.snapshots), interval=1e3/fps, repeat=repeat)
+        if save_animation:
+            print('Saving...')
+            writer = animation.PillowWriter(fps=fps)
+            ani.save(f'{filename}.gif', writer=writer)
+        print('Displaying...')
+        plt.show()
+        print('Done!')
+        
+    def show_electric_field(self, fps=10, save_animation=False, filename='Electric_field', repeat=True):
+        print('Generating plot...')
+        fig = plt.figure(figsize=(10, 5))
+        e_field = np.abs(np.array([fft.fft(s.e_field)[1] for s in self.snapshots]))
+        time = np.array([s.time for s in self.snapshots])
+        plt.plot(time, e_field)
+        plt.ylabel('Electric Field (N/C)')
+        plt.xlabel('Time (s)')
+        plt.yscale('log')
+        
+        # Determine maximum points
+        idx = np.array([i if e_field[i-1] < e_field[i] and e_field[i+1] < e_field[i] else 0 for i in range(1, e_field.shape[0]-1)])
+        idx = idx[idx > 0]
+        # Determine decay region
+        decay_idx = [idx[0]]
+        for i in range(1, idx.shape[0]):
+            if e_field[idx[i]] >= e_field[idx[i-1]]:
+                break
+            decay_idx.append(idx[i])
+        decay_idx = np.array(decay_idx)
+        # Determine growth region
+        growth_idx = [decay_idx[-1]]
+        for i in range(decay_idx.shape[0] , idx.shape[0]):
+            if e_field[idx[i]] <= e_field[idx[i-1]]:
+                break
+            growth_idx.append(idx[i])
+        # Fit curves
+        log_decay = np.log(e_field[decay_idx])
+        gamma_decay, a = np.polyfit(time[decay_idx], log_decay, 1)
+        decay_line = np.exp(gamma_decay * time[decay_idx] + a)
+        log_growth = np.log(e_field[growth_idx])
+        gamma_growth, a = np.polyfit(time[growth_idx], log_growth, 1)
+        growth_line = np.exp(gamma_growth * time[growth_idx] + a)
+        plt.plot(time[decay_idx], decay_line, color='r', linestyle='--', label=f'$\gamma$ = {gamma_decay:.3g}')
+        plt.plot(time[growth_idx], growth_line, color='g', linestyle='--', label=f'$\gamma$ = {gamma_growth:.3g}')
+        plt.legend()
+        plt.show()
+        
+        print('Generating animation...')
+        fig = plt.figure(figsize=(10, 5))
+        
+        max_e_field = np.array([s.e_field for s in self.snapshots]).max()
+        min_e_field = np.array([s.e_field for s in self.snapshots]).min()
+        e_field_domain = [min_e_field, max_e_field]
+
+        def show(ts):
+            t_idx, s = ts
+
+            fig.clear()
+            plt.plot(self.node_positions, s.e_field)
+            plt.title(f'Time = {s.time: .3g}')
+            plt.ylabel('Electric Field (N/C)')
+            plt.xlabel('x (m)')
+            plt.ylim(*e_field_domain)
+            plt.xlim(self.x_domain)
 
         show((0, self.snapshots[0]))
         ani = animation.FuncAnimation(fig=fig, func=show, frames=enumerate(self.snapshots), interval=1e3/fps, repeat=repeat)
@@ -232,11 +306,15 @@ class Simulation:
     def save_snapshots_to_csv(self, filename):
         print(f'Saving to {filename}...')
         particle_list = []
+        node_list = []
         for s in self.snapshots:
             particle_list.append(np.concat((s.x, s.v)))
+            node_list.append(s.e_field)
         particle_array = np.column_stack(particle_list)
+        node_array = np.column_stack(node_list)
         np.savetxt(f'{filename}_particles.csv', particle_array, delimiter=',')
         np.savetxt(f'{filename}_node_positions.csv', self.node_positions, delimiter=',')
+        np.savetxt(f'{filename}_nodes.csv', node_array, delimiter=',')
         print('Done!')
 
     def show_integrated_moments(self, save=False, filename='Integrated Moments'):

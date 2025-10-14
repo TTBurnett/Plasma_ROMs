@@ -1,9 +1,8 @@
 import numpy as np
 import sys
 sys.path.append('..')
-from fastsimulation import Simulation
+from particleromsimulation import RomSimulation
 import constants
-import filters
 
 if __name__ == "__main__":
     n_cells = 64
@@ -20,9 +19,6 @@ if __name__ == "__main__":
     resonance = 2*np.pi*mean_v*inv_w_pe
     max_x = resonance
     weight_factor = (2*max_x/n_cells)**3*n0 / n_particles_per_cell
-
-    def f(x, v):
-        return np.exp(-0.5 * ((abs(v) - mean_v)/std_v)**2)
     
     def color_rule(x, v):
         return np.where(v > 0, 'c', 'm')
@@ -30,24 +26,30 @@ if __name__ == "__main__":
     dt = 0.005*inv_w_pe
     end_time = dt*1e4
     background_charge_density = lambda x: constants.q_electron * n0
-    shape = filters.SplineFilter(3)
-    
-    sim = Simulation(
-        n_nodes=n_cells,
-        n_particles_per_cell=n_particles_per_cell,
-        particle_weight_factor=weight_factor,
-        particle_shape_function=shape,
+
+    print('Loading snapshots...')
+    filename = f'two_stream_{n_cells}c{n_particles_per_cell}ppc'
+    particle_snapshots = np.loadtxt(f'{filename}_particles.csv', dtype=float, delimiter=',')
+    node_positions = np.loadtxt(f'{filename}_node_positions.csv', dtype=float, delimiter=',')
+
+    print('Setting up simulation...')
+    sim = RomSimulation(
+        particle_snapshots=particle_snapshots,
+        node_positions=node_positions,
         dt=dt, end_time=end_time,
-        f0=f,
         x_domain=(-max_x, max_x),
         v_domain=(-max_v, max_v),
         background_charge_density=background_charge_density,
+        particle_weight_factor=weight_factor,
+        particle_order=1,
         snapshot_interval=15,
         color_rule=color_rule
     )
     
-    filename = f'two_stream_{n_cells}c{n_particles_per_cell}ppc'
-
-    sim.run()
-    sim.save_snapshots_to_csv(filename=filename)
-    sim.show_snapshots(fps=15, save_animation=True, filename=filename, show_moments=False)
+    n_particle_modes = 100
+    pod_type = 'PSD'
+    sim.show_singular_values()
+    sim.run(n_particle_modes, pod_type=pod_type)
+    sim.show_snapshots(fps=15, save_animation=True,
+                       filename=f'{filename}_particle_rom_{pod_type}_{n_particle_modes}pm', show_moments=False)
+    sim.show_statistics()
