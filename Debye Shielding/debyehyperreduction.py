@@ -4,7 +4,7 @@ import constants
 
 if __name__ == "__main__":
     n_cells = 64
-    n_particles_per_cell = 150
+    n_particles_per_cell = 200
 
     n0 = 1e15
     Te = 10000000
