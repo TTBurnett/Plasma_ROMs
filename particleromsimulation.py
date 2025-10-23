@@ -1,5 +1,4 @@
 import sys
-sys.path.append('..')
 from typing import Literal
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
@@ -26,6 +25,32 @@ def spline(x_ref, order: int = 1):
             return np.select(conditions, values, default=0)
         case _:
             raise ValueError(f'Invalid spline order {order}. [0, 1] are supported.')
+        
+def construct_measurments(max_idx, n_hyperreduction_points, hyperreduction_algorithm: Literal['Gappy', 'DEIM'], u):
+    match hyperreduction_algorithm:
+        case 'Gappy':
+            measurement_idx = np.random.choice(range(max_idx), size=n_hyperreduction_points, replace=False)
+        case 'DEIM':
+            n_basis = u.shape[1]
+            measurement_idx = np.empty(n_hyperreduction_points, dtype=int)
+            measurement_idx[0] = np.argmax(u[:, 0])
+            for i in range(1, n_hyperreduction_points):
+                print(f'DEIM: {i}/{n_hyperreduction_points} ({i/n_hyperreduction_points:.2%})')
+                c = np.linalg.pinv(u[measurement_idx[:i], :i]) @ u[measurement_idx[:i], i]
+                residual = u[:, i] - u[:, :i] @ c
+                measurement_idx[i] = np.argmax(residual)
+                if i == n_basis-1:
+                    all_idx = np.arange(max_idx)
+                    remaining_idx = np.delete(all_idx, measurement_idx[:n_basis])
+                    measurement_idx[n_basis:] = np.random.choice(remaining_idx, size=n_hyperreduction_points-n_basis, replace=False)
+                    break
+        case 'QDEIM':
+            pass
+        case _:
+            raise ValueError(f'Invalid hyperreduction algorithm "{hyperreduction_algorithm}".')
+
+    measurement_idx.sort()
+    return measurement_idx
 
 class RomSimulation:
     def __init__(self,
@@ -37,11 +62,14 @@ class RomSimulation:
                  particle_order = 1,
                  particle_weight_factor=1.0,
                  snapshot_interval = 10,
-                 color_rule = None):
+                 color_rule = None,
+                 interpolation_snapshot_file = None):
         self.node_positions = node_positions
         self.n_particles = particle_snapshots.shape[0] // 2
+        self.n_snapshots = particle_snapshots.shape[1]
         self.px_snapshots = particle_snapshots[:self.n_particles]
         self.pv_snapshots = particle_snapshots[self.n_particles:]
+        self.interpolation_snapshot_file = interpolation_snapshot_file
         self.n_nodes = node_positions.shape[0]
         self.time = 0
         self.end_time = end_time
@@ -110,6 +138,28 @@ class RomSimulation:
         self.time += self.dt
 
     def run(self, n_particle_modes, pod_type: Literal['POD', 'PSD', 'Full'] = 'POD', save_snapshots=True):
+        
+        # Setup
+        self.setup_rom(n_particle_modes, pod_type)
+        if self.interpolation_snapshot_file != None:
+            self.setup_hyperreduction(n_particle_modes)
+
+        # Take initial condition snapshot
+        self.interpolate_particles_to_field()
+        self.update_electric_field()
+        self.interpolate_field_to_particles()
+        self.save_snapshot()
+
+        start = time.perf_counter()
+        while self.time < self.end_time:
+            self.update()
+            if round(self.time / self.dt) % self.snapshot_interval == 0:
+                print(f't = {self.time:.3g}/{self.end_time:.3g} ({self.time/self.end_time:.2%})')
+                if save_snapshots:
+                    self.save_snapshot()
+        print(f'Elapsed time: {time.perf_counter() - start:.4f} seconds')
+        
+    def setup_rom(self, n_particle_modes, pod_type):
         match(pod_type):
             case 'POD':
                 self.psi_px = romtools.get_pod_basis(self.px_snapshots, n_modes=n_particle_modes)
@@ -149,21 +199,14 @@ class RomSimulation:
         B[-1, 0] = 1
         B[-1, -2] = -1
         self.electric_field_matrix = -(0.5 / self.dx) * B @ self.inv_laplacian
-
-        # Take initial condition snapshot
-        self.interpolate_particles_to_field()
-        self.update_electric_field()
-        self.interpolate_field_to_particles()
-        self.save_snapshot()
-
-        start = time.perf_counter()
-        while self.time < self.end_time:
-            self.update()
-            if round(self.time / self.dt) % self.snapshot_interval == 0:
-                print(f't = {self.time:.3g}/{self.end_time:.3g} ({self.time/self.end_time:.2%})')
-                if save_snapshots:
-                    self.save_snapshot()
-        print(f'Elapsed time: {time.perf_counter() - start:.4f} seconds')
+        
+    def setup_hyperreduction(self, n_particle_modes):
+        interpolations = sparse.load_npz(self.interpolation_snapshot_file)
+        blocks = np.hsplit(interpolations.todense(), self.n_snapshots)
+        print(blocks[0].shape)
+        interpolation_snapshots = np.hstack([b.reshape(-1, 1, order='F') for b in blocks])
+        
+        measurment_idx = construct_measurments(max_idx=self.n_particles, n_hyperreduction_points=n_particle_modes, hyperreduction_algorithm='DEIM', u=self.psi_px)
 
     def save_snapshot(self):
         self.snapshots.append(Snapshot(self.time, self.shift_x_to_domain(self.psi_px @ self.px), self.psi_pv @ self.pv, self.nrho))

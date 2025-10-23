@@ -1,7 +1,7 @@
 import numpy as np
-from particleromsimulation import RomSimulation
 import sys
 sys.path.append('..')
+from particleromsimulation import RomSimulation
 import constants
 
 if __name__ == "__main__":

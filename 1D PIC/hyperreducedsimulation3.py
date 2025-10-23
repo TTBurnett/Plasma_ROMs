@@ -98,8 +98,6 @@ class PodSimulation:
                 self.psi_p  = romtools.get_basis_for_all(n_particle_modes, self.px_snapshots, self.pv_snapshots)
                 reshaped_interpolation_snapshots = self.interpolation_snapshots.T.reshape(-1, self.n_nodes, self.n_particles).transpose(2, 1, 0).reshape(self.n_particles, -1)
                 psi_interpolations, svs, _ = randomized_svd(reshaped_interpolation_snapshots, n_hyperreduction_modes)
-                # plt.plot(np.cumsum(s) / np.sum(s), '-o')
-                # plt.show()
 
                 print('Determining measurement locations...')
                 self.particle_measurement_idx = construct_measurments(self.n_particles, percent_hyperreduction_points, hyperreduction_algorithm, psi_interpolations)
