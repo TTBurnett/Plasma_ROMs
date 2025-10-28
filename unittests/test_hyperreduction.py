@@ -4,10 +4,11 @@ from particleromsimulation import RomSimulation
 import pytest
 import numpy as np
 import constants
+import matplotlib.pyplot as plt
 
 def test_hyperreduction():
-    n_cells = 10
-    n_particles_per_cell = 10
+    n_cells = 5
+    n_particles_per_cell = 5
 
     n0 = 1e23
     Te = 1e8
@@ -46,16 +47,47 @@ def test_hyperreduction():
         interpolation_snapshot_file=f'{filename}_interpolations.npz'
     )
     
-    n_particle_modes = 100
-    n_hyperreduction_points = 100
+    np.set_printoptions(formatter={'float': lambda x: f"{x:.2f}"})
     pod_type = 'POD'
+    
+    total_interpolation_size = 125
+    total_particle_number = 25
+    n_particle_modes = 25
     sim.setup_rom(n_particle_modes, pod_type)
-    sim.setup_hyperreduction(n_particle_modes, n_hyperreduction_points)
-    sim.interpolate_particles_to_field()
-    sim.interpolate_field_to_particles()
-    print(sim.interpolation)
-    true = sim.get_interpolation_matrix(sim.psi_px @ sim.px)
-    print(true)
+    sim.n_idx_tiling = np.tile([-1, 0, 1], sim.n_particles)
+    sim.p_idx = np.repeat(np.arange(sim.n_particles), 3)
+    sim.n_hyperreduction_points = 25
+    true_ans = sim.get_interpolation_matrix(sim.psi_px @ sim.px).T.todense()
+    
+    error = np.empty((total_interpolation_size, total_particle_number))
+    for i in range(1, total_interpolation_size+1):
+        for j in range(1, total_particle_number+1):
+            n_hyperreduction_points = j
+            n_hyperreduction_modes = i
+            sim.setup_hyperreduction(n_particle_modes, n_hyperreduction_points, n_hyperreduction_modes, should_print=False)
+            sim.interpolate_particles_to_field()
+            ans = sim.unhyperreduce_and_reshape.todense() @ sim.interpolation
+            error_value = np.linalg.norm(ans - true_ans) / np.linalg.norm(true_ans)
+            error[i-1, j-1] = np.log10(error_value)
+            print(i, j)
+    
+    X, Y = np.meshgrid(np.arange(1, total_particle_number+1), np.arange(1, total_interpolation_size+1))
+
+    # Create 3D surface plot
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection='3d')
+    surf = ax.plot_surface(X, Y, error, cmap='viridis', edgecolor='none')
+
+    # Labels and title
+    ax.set_xlabel('# of Hyperreduction Points')
+    ax.set_ylabel('# of Nonlinearity Modes')
+    ax.set_zlabel('Relative Error')
+    ax.set_title('Error Surface')
+
+    # Add colorbar
+    fig.colorbar(surf, ax=ax, shrink=0.6, label='Relative Error')
+
+    plt.tight_layout()
+    plt.show()
     
 test_hyperreduction()
-    

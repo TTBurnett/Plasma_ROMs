@@ -6,8 +6,8 @@ import constants
 import filters
 
 if __name__ == "__main__":
-    n_cells = 10
-    n_particles_per_cell = 10
+    n_cells = 64
+    n_particles_per_cell = 50
 
     n0 = 1e23
     Te = 1e8
@@ -46,5 +46,5 @@ if __name__ == "__main__":
     sim.run()
     sim.save_snapshots_to_csv(filename)
     #sim.show_potential(fps=15, n0=n0, debye_length=debye_length, save_animation=False)
-    sim.show_snapshots(fps=15, save_animation=True, filename=filename, show_moments=False)
+    sim.show_snapshots(fps=15, save_animation=False, filename=filename, show_moments=False)
     # sim.show_integrated_moments(save=True, filename=f'{filename}_moments')

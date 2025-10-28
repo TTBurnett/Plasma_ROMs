@@ -26,7 +26,7 @@ def spline(x_ref, order: int = 1):
         case _:
             raise ValueError(f'Invalid spline order {order}. [0, 1] are supported.')
         
-def construct_measurments(max_idx, n_hyperreduction_points, hyperreduction_algorithm: Literal['Gappy', 'DEIM'], u):
+def construct_measurments(max_idx, n_hyperreduction_points, hyperreduction_algorithm: Literal['Gappy', 'DEIM'], u, should_print=True):
     match hyperreduction_algorithm:
         case 'Gappy':
             measurement_idx = np.random.choice(range(max_idx), size=n_hyperreduction_points, replace=False)
@@ -35,15 +35,16 @@ def construct_measurments(max_idx, n_hyperreduction_points, hyperreduction_algor
             measurement_idx = np.empty(n_hyperreduction_points, dtype=int)
             measurement_idx[0] = np.argmax(u[:, 0])
             for i in range(1, n_hyperreduction_points):
-                print(f'DEIM: {i}/{n_hyperreduction_points} ({i/n_hyperreduction_points:.2%})')
-                c = np.linalg.pinv(u[measurement_idx[:i], :i]) @ u[measurement_idx[:i], i]
-                residual = u[:, i] - u[:, :i] @ c
-                measurement_idx[i] = np.argmax(residual)
-                if i == n_basis-1:
+                if i == n_basis:
                     all_idx = np.arange(max_idx)
+                    print(measurement_idx[:n_basis])
                     remaining_idx = np.delete(all_idx, measurement_idx[:n_basis])
                     measurement_idx[n_basis:] = np.random.choice(remaining_idx, size=n_hyperreduction_points-n_basis, replace=False)
                     break
+                if should_print: print(f'DEIM: {i}/{n_hyperreduction_points} ({i/n_hyperreduction_points:.2%})')
+                c = np.linalg.pinv(u[measurement_idx[:i], :i]) @ u[measurement_idx[:i], i]
+                residual = np.abs(u[:, i] - u[:, :i] @ c)
+                measurement_idx[i] = np.argmax(residual)
         case 'QDEIM':
             pass
         case _:
@@ -121,7 +122,7 @@ class RomSimulation:
 
     def interpolate_particles_to_field(self):
         if self.should_hyperreduce:
-            self.interpolation = self.get_interpolation_matrix(self.psi_px[self.measurment_idx] @ self.px).T.reshape(-1, order='F')
+            self.interpolation = self.get_interpolation_matrix(self.psi_px[self.measurement_idx] @ self.px).T.reshape(-1, order='F')
             self.nrho = (-const.q_electron*self.weight_factor/self.dx**3)*(self.qp @ self.interpolation) + self.background_charge_density
         else:
             self.interpolation = self.get_interpolation_matrix(self.psi_px @ self.px)
@@ -145,7 +146,7 @@ class RomSimulation:
         self.accelerate_particles()
         self.time += self.dt
 
-    def run(self, n_particle_modes, n_hyperreduction_points, pod_type: Literal['POD', 'PSD', 'Full'] = 'POD', save_snapshots=True):
+    def run(self, n_particle_modes, n_hyperreduction_points, n_hyperreduction_modes, pod_type: Literal['POD', 'PSD', 'Full'] = 'POD', save_snapshots=True):
         
         # Setup
         self.setup_rom(n_particle_modes, pod_type)
@@ -205,30 +206,31 @@ class RomSimulation:
         B[-1, -2] = -1
         self.electric_field_matrix = -(0.5 / self.dx) * B @ self.inv_laplacian
         
-    def setup_hyperreduction(self, n_particle_modes, n_hyperreduction_points):
-        print('Beginning hyperreduction...')
+    def setup_hyperreduction(self, n_particle_modes, n_hyperreduction_points, n_hyperreduction_modes, should_print=True):
+        if should_print: print('Beginning hyperreduction...')
         if self.should_hyperreduce:
-            print('Loading interpolation matrices...')
+            if should_print: print('Loading interpolation matrices...')
             interpolations = scisparse.load_npz(self.interpolation_snapshot_file)
             blocks = np.hsplit(interpolations.todense(), self.n_snapshots)
             interpolation_snapshots = np.hstack([b.T.reshape(-1, 1, order='F') for b in blocks])
-            print('Computing SVD...')
-            psi_interpolation = romtools.get_pod_basis(interpolation_snapshots, n_modes=2*n_particle_modes)
+            if should_print: print('Computing SVD...')
+            psi_interpolation = romtools.get_pod_basis(interpolation_snapshots, n_modes=n_hyperreduction_modes)
             
             del interpolations
             del blocks
             del interpolation_snapshots
             
-            print('Finding measurement indices...')
-            self.measurment_idx = construct_measurments(max_idx=self.n_particles, n_hyperreduction_points=n_hyperreduction_points, hyperreduction_algorithm='DEIM', u=self.psi_px)
+            if should_print: print('Finding measurement indices...')
+            self.measurement_idx = construct_measurments(max_idx=self.n_particles, n_hyperreduction_points=n_hyperreduction_points, hyperreduction_algorithm='DEIM', u=self.psi_px, should_print=should_print)
             self.n_idx_tiling = np.tile([-1, 0, 1], n_hyperreduction_points)
             self.p_idx = np.repeat(np.arange(n_hyperreduction_points), 3)
             
-            interpolation_measurement_idx = np.repeat(self.measurment_idx*self.n_nodes, self.n_nodes) + np.tile(np.arange(self.n_nodes), n_hyperreduction_points)
+            interpolation_measurement_idx = np.tile(self.measurement_idx, self.n_nodes) + np.repeat(np.arange(self.n_nodes) * self.n_particles, n_hyperreduction_points)
+            #interpolation_measurement_idx = np.repeat(self.measurement_idx*self.n_nodes, self.n_nodes) + np.tile(np.arange(self.n_nodes), n_hyperreduction_points)
             unhyperreduce = psi_interpolation @ np.linalg.pinv(psi_interpolation[interpolation_measurement_idx])
             del psi_interpolation
             
-            print('Building unhyperreduction tensor...')
+            if should_print: print('Building unhyperreduction tensor...')
             n, m, k = self.n_particles, self.n_nodes, unhyperreduce.shape[1]
 
             # Compute flattened row indices for each (i, j) pair
@@ -251,18 +253,18 @@ class RomSimulation:
             coords = np.vstack([I.ravel(), J.ravel(), P.ravel()])
             data = data.ravel()
 
-            unhyperreduce_and_reshape = sparse.COO(coords, data, shape=(n, m, k))
+            self.unhyperreduce_and_reshape = sparse.COO(coords, data, shape=(n, m, k))
             del data
             del coords
             del unhyperreduce
             
             # Create reconstruction matrices
-            print('Computing qp...')
-            self.qp = sparse.einsum('ijk,k->ij', unhyperreduce_and_reshape.T, np.ones(self.n_particles), optimize=True).T.todense()
-            print('Computing ne_to_pe...')
+            if should_print: print('Computing qp...')
+            self.qp = sparse.einsum('ijk,k->ij', self.unhyperreduce_and_reshape.T, np.ones(self.n_particles), optimize=True).T.todense()
+            if should_print: print('Computing ne_to_pe...')
             self.ne_to_pe = np.zeros((n_particle_modes, self.n_nodes, n_hyperreduction_points*self.n_nodes))
-            for j in range(unhyperreduce_and_reshape.shape[1]):
-                self.ne_to_pe[:, j, :] = self.psi_pv.T @ unhyperreduce_and_reshape[:, j, :].tocsr()
+            for j in range(self.unhyperreduce_and_reshape.shape[1]):
+                self.ne_to_pe[:, j, :] = self.psi_pv.T @ self.unhyperreduce_and_reshape[:, j, :].tocsr()
             self.n_hyperreduction_points = n_hyperreduction_points
         else:
             self.n_idx_tiling = np.tile([-1, 0, 1], self.n_particles)
