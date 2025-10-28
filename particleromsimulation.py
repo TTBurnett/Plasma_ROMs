@@ -1,4 +1,3 @@
-import sys
 from typing import Literal
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
@@ -6,7 +5,8 @@ import numpy as np
 import constants as const
 import romtools
 import time
-from scipy import sparse
+import sparse
+import scipy.sparse as scisparse
 
 class Snapshot:
     def __init__(self, time, px, pv, nrho):
@@ -70,6 +70,7 @@ class RomSimulation:
         self.px_snapshots = particle_snapshots[:self.n_particles]
         self.pv_snapshots = particle_snapshots[self.n_particles:]
         self.interpolation_snapshot_file = interpolation_snapshot_file
+        self.should_hyperreduce = False if interpolation_snapshot_file == None else True
         self.n_nodes = node_positions.shape[0]
         self.time = 0
         self.end_time = end_time
@@ -103,7 +104,9 @@ class RomSimulation:
         n_idx = np.repeat(((x - self.x_domain[0]) % self.L) // self.dx, 3).astype(int) + self.n_idx_tiling
         n_idx %= self.n_nodes
         interp_vals = spline(self.get_distance(x[self.p_idx], self.node_positions[n_idx])/self.dx)
-        return sparse.csr_array((interp_vals, (n_idx, self.p_idx)), shape=(self.n_nodes, self.n_particles))
+        if self.should_hyperreduce:
+            return scisparse.csr_array((interp_vals, (n_idx, self.p_idx)), shape=(self.n_nodes, self.n_hyperreduction_points))
+        return scisparse.csr_array((interp_vals, (n_idx, self.p_idx)), shape=(self.n_nodes, self.n_particles))
 
     def shift_x_to_domain(self, x):
         return (x - self.x_domain[0]) % self.L + self.x_domain[0]
@@ -117,15 +120,20 @@ class RomSimulation:
         self.px += self.v_to_x @ (self.pv*self.dt + 0.5*self.last_acceleration*self.dt**2)
 
     def interpolate_particles_to_field(self):
-        self.interpolation = self.get_interpolation_matrix(self.psi_px @ self.px)
-        self.nrho = -const.q_electron*self.weight_factor*self.interpolation.sum(axis=1)/self.dx**3 + self.background_charge_density
+        if self.should_hyperreduce:
+            self.interpolation = self.get_interpolation_matrix(self.psi_px[self.measurment_idx] @ self.px).T.reshape(-1, order='F')
+            self.nrho = (-const.q_electron*self.weight_factor/self.dx**3)*(self.qp @ self.interpolation) + self.background_charge_density
+        else:
+            self.interpolation = self.get_interpolation_matrix(self.psi_px @ self.px)
+            self.nrho = (-const.q_electron*self.weight_factor/self.dx**3)*self.interpolation.sum(axis=1) + self.background_charge_density
 
     def update_electric_field(self):
         self.ne_field = self.electric_field_matrix @ self.nrho
 
     def interpolate_field_to_particles(self):
-        self.pe_field = self.psi_pv.T @ self.interpolation.T @ self.ne_field
-
+        uninterpolate = self.ne_to_pe @ self.interpolation
+        self.pe_field = uninterpolate @ self.ne_field
+        
     def accelerate_particles(self):
         self.pv += 0.5*(-const.q_over_m*self.pe_field+self.last_acceleration)*self.dt
 
@@ -137,12 +145,11 @@ class RomSimulation:
         self.accelerate_particles()
         self.time += self.dt
 
-    def run(self, n_particle_modes, pod_type: Literal['POD', 'PSD', 'Full'] = 'POD', save_snapshots=True):
+    def run(self, n_particle_modes, n_hyperreduction_points, pod_type: Literal['POD', 'PSD', 'Full'] = 'POD', save_snapshots=True):
         
         # Setup
         self.setup_rom(n_particle_modes, pod_type)
-        if self.interpolation_snapshot_file != None:
-            self.setup_hyperreduction(n_particle_modes)
+        self.setup_hyperreduction(n_particle_modes, n_hyperreduction_points)
 
         # Take initial condition snapshot
         self.interpolate_particles_to_field()
@@ -179,8 +186,6 @@ class RomSimulation:
         # Set up vectors
         self.px = self.psi_px.T @ self.px_snapshots[:, 0]
         self.pv = self.psi_pv.T @ self.pv_snapshots[:, 0]
-        self.n_idx_tiling = np.tile([-1, 0, 1], self.n_particles)
-        self.p_idx = np.repeat(range(self.n_particles), 3)
 
         # Set up operators
         laplacian = np.zeros((self.n_nodes, self.n_nodes))
@@ -200,14 +205,69 @@ class RomSimulation:
         B[-1, -2] = -1
         self.electric_field_matrix = -(0.5 / self.dx) * B @ self.inv_laplacian
         
-    def setup_hyperreduction(self, n_particle_modes):
-        interpolations = sparse.load_npz(self.interpolation_snapshot_file)
-        blocks = np.hsplit(interpolations.todense(), self.n_snapshots)
-        print(blocks[0].shape)
-        interpolation_snapshots = np.hstack([b.reshape(-1, 1, order='F') for b in blocks])
-        
-        measurment_idx = construct_measurments(max_idx=self.n_particles, n_hyperreduction_points=n_particle_modes, hyperreduction_algorithm='DEIM', u=self.psi_px)
+    def setup_hyperreduction(self, n_particle_modes, n_hyperreduction_points):
+        print('Beginning hyperreduction...')
+        if self.should_hyperreduce:
+            print('Loading interpolation matrices...')
+            interpolations = scisparse.load_npz(self.interpolation_snapshot_file)
+            blocks = np.hsplit(interpolations.todense(), self.n_snapshots)
+            interpolation_snapshots = np.hstack([b.T.reshape(-1, 1, order='F') for b in blocks])
+            print('Computing SVD...')
+            psi_interpolation = romtools.get_pod_basis(interpolation_snapshots, n_modes=2*n_particle_modes)
+            
+            del interpolations
+            del blocks
+            del interpolation_snapshots
+            
+            print('Finding measurement indices...')
+            self.measurment_idx = construct_measurments(max_idx=self.n_particles, n_hyperreduction_points=n_hyperreduction_points, hyperreduction_algorithm='DEIM', u=self.psi_px)
+            self.n_idx_tiling = np.tile([-1, 0, 1], n_hyperreduction_points)
+            self.p_idx = np.repeat(np.arange(n_hyperreduction_points), 3)
+            
+            interpolation_measurement_idx = np.repeat(self.measurment_idx*self.n_nodes, self.n_nodes) + np.tile(np.arange(self.n_nodes), n_hyperreduction_points)
+            unhyperreduce = psi_interpolation @ np.linalg.pinv(psi_interpolation[interpolation_measurement_idx])
+            del psi_interpolation
+            
+            print('Building unhyperreduction tensor...')
+            n, m, k = self.n_particles, self.n_nodes, unhyperreduce.shape[1]
 
+            # Compute flattened row indices for each (i, j) pair
+            i, j = np.meshgrid(np.arange(n), np.arange(m), indexing='ij')  # shape (n, m)
+            r = i + n * j  # row index into unhyperreduce
+
+            # Gather the data directly using fancy indexing
+            # unhyperreduce[r, :] will have shape (n, m, k)
+            data = unhyperreduce[r, :]
+
+            # Build coordinates for sparse COO tensor
+            # Repeat i, j, p along k dimension to match data shape
+            p = np.arange(k)
+            I, J, P = np.broadcast_arrays(
+                i[:, :, None],
+                j[:, :, None],
+                p[None, None, :]
+            )
+
+            coords = np.vstack([I.ravel(), J.ravel(), P.ravel()])
+            data = data.ravel()
+
+            unhyperreduce_and_reshape = sparse.COO(coords, data, shape=(n, m, k))
+            del data
+            del coords
+            del unhyperreduce
+            
+            # Create reconstruction matrices
+            print('Computing qp...')
+            self.qp = sparse.einsum('ijk,k->ij', unhyperreduce_and_reshape.T, np.ones(self.n_particles), optimize=True).T.todense()
+            print('Computing ne_to_pe...')
+            self.ne_to_pe = np.zeros((n_particle_modes, self.n_nodes, n_hyperreduction_points*self.n_nodes))
+            for j in range(unhyperreduce_and_reshape.shape[1]):
+                self.ne_to_pe[:, j, :] = self.psi_pv.T @ unhyperreduce_and_reshape[:, j, :].tocsr()
+            self.n_hyperreduction_points = n_hyperreduction_points
+        else:
+            self.n_idx_tiling = np.tile([-1, 0, 1], self.n_particles)
+            self.p_idx = np.repeat(np.arange(self.n_particles), 3)
+        
     def save_snapshot(self):
         self.snapshots.append(Snapshot(self.time, self.shift_x_to_domain(self.psi_px @ self.px), self.psi_pv @ self.pv, self.nrho))
 

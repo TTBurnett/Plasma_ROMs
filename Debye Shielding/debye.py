@@ -6,8 +6,8 @@ import constants
 import filters
 
 if __name__ == "__main__":
-    n_cells = 64
-    n_particles_per_cell = 200
+    n_cells = 10
+    n_particles_per_cell = 10
 
     n0 = 1e23
     Te = 1e8

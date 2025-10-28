@@ -1,12 +1,13 @@
-import numpy as np
 import sys
 sys.path.append('..')
 from particleromsimulation import RomSimulation
+import pytest
+import numpy as np
 import constants
 
-if __name__ == "__main__":
-    n_cells = 64
-    n_particles_per_cell = 50
+def test_hyperreduction():
+    n_cells = 10
+    n_particles_per_cell = 10
 
     n0 = 1e23
     Te = 1e8
@@ -45,10 +46,16 @@ if __name__ == "__main__":
         interpolation_snapshot_file=f'{filename}_interpolations.npz'
     )
     
-    n_particle_modes = 50
-    n_hyperreduction_points = 150
+    n_particle_modes = 100
+    n_hyperreduction_points = 100
     pod_type = 'POD'
-    sim.run(n_particle_modes, n_hyperreduction_points, pod_type=pod_type)
-    sim.show_snapshots(fps=15, save_animation=True,
-                       filename=f'{filename}_particle_rom_{pod_type}_{n_particle_modes}pm', show_moments=False)
-    sim.show_statistics()
+    sim.setup_rom(n_particle_modes, pod_type)
+    sim.setup_hyperreduction(n_particle_modes, n_hyperreduction_points)
+    sim.interpolate_particles_to_field()
+    sim.interpolate_field_to_particles()
+    print(sim.interpolation)
+    true = sim.get_interpolation_matrix(sim.psi_px @ sim.px)
+    print(true)
+    
+test_hyperreduction()
+    
