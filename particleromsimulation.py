@@ -5,15 +5,13 @@ import numpy as np
 import constants as const
 import romtools
 import time
-import sparse
 import scipy.sparse as scisparse
 
 class Snapshot:
-    def __init__(self, time, px, pv, nrho):
+    def __init__(self, time, px, pv):
         self.time = time
         self.x = px
         self.v = pv
-        self.nrho = nrho
 
 def spline(x_ref, order: int = 1):
     match order:
@@ -106,7 +104,10 @@ class RomSimulation:
         n_idx %= self.n_nodes
         interp_vals = spline(self.get_distance(x[self.p_idx], self.node_positions[n_idx])/self.dx)
         if self.should_hyperreduce:
-            return scisparse.csr_array((interp_vals, (n_idx, self.p_idx)), shape=(self.n_nodes, self.n_hyperreduction_points))
+            interp_vector = np.zeros(self.n_nodes*self.n_hyperreduction_points)
+            flat_idx = n_idx * self.n_hyperreduction_points + self.p_idx
+            interp_vector[flat_idx] = interp_vals
+            return interp_vector
         return scisparse.csr_array((interp_vals, (n_idx, self.p_idx)), shape=(self.n_nodes, self.n_particles))
 
     def shift_x_to_domain(self, x):
@@ -117,26 +118,30 @@ class RomSimulation:
         return 0.5*self.L - np.abs(np.abs(px_domain - nx) - 0.5*self.L)
 
     def push_particles(self):
-        self.last_acceleration = -const.q_over_m*self.pe_field
-        self.px += self.v_to_x @ (self.pv*self.dt + 0.5*self.last_acceleration*self.dt**2)
+        self.px += self.v_to_x @ (self.pv*self.dt)
 
     def interpolate_particles_to_field(self):
         if self.should_hyperreduce:
-            self.interpolation = self.get_interpolation_matrix(self.psi_px[self.measurement_idx] @ self.px).T.reshape(-1, order='F')
-            self.nrho = (-const.q_electron*self.weight_factor/self.dx**3)*(self.qp @ self.interpolation) + self.background_charge_density
+            self.interpolation = self.get_interpolation_matrix(self.psi_px[self.measurement_idx] @ self.px)
         else:
             self.interpolation = self.get_interpolation_matrix(self.psi_px @ self.px)
             self.nrho = (-const.q_electron*self.weight_factor/self.dx**3)*self.interpolation.sum(axis=1) + self.background_charge_density
 
     def update_electric_field(self):
-        self.ne_field = self.electric_field_matrix @ self.nrho
+        if self.should_hyperreduce:
+            self.ne_field = self.ep @ self.interpolation + self.bg_e_field
+        else:
+            self.ne_field = self.electric_field_matrix @ self.nrho
 
     def interpolate_field_to_particles(self):
-        uninterpolate = self.ne_to_pe @ self.interpolation
-        self.pe_field = uninterpolate @ self.ne_field
+        if self.should_hyperreduce:
+            uninterpolate = self.ne_to_pe @ self.interpolation
+            self.pe_field = uninterpolate @ self.ne_field
+        else:
+            self.pe_field = self.interpolation.T @ self.ne_field
         
     def accelerate_particles(self):
-        self.pv += 0.5*(-const.q_over_m*self.pe_field+self.last_acceleration)*self.dt
+        self.pv += -const.q_over_m*self.dt*self.pe_field
 
     def update(self):
         self.push_particles()
@@ -150,7 +155,7 @@ class RomSimulation:
         
         # Setup
         self.setup_rom(n_particle_modes, pod_type)
-        self.setup_hyperreduction(n_particle_modes, n_hyperreduction_points)
+        self.setup_hyperreduction(n_particle_modes, n_hyperreduction_points, n_hyperreduction_modes)
 
         # Take initial condition snapshot
         self.interpolate_particles_to_field()
@@ -226,7 +231,6 @@ class RomSimulation:
             self.p_idx = np.repeat(np.arange(n_hyperreduction_points), 3)
             
             interpolation_measurement_idx = np.tile(self.measurement_idx, self.n_nodes) + np.repeat(np.arange(self.n_nodes) * self.n_particles, n_hyperreduction_points)
-            #interpolation_measurement_idx = np.repeat(self.measurement_idx*self.n_nodes, self.n_nodes) + np.tile(np.arange(self.n_nodes), n_hyperreduction_points)
             unhyperreduce = psi_interpolation @ np.linalg.pinv(psi_interpolation[interpolation_measurement_idx])
             del psi_interpolation
             
@@ -253,25 +257,28 @@ class RomSimulation:
             coords = np.vstack([I.ravel(), J.ravel(), P.ravel()])
             data = data.ravel()
 
-            self.unhyperreduce_and_reshape = sparse.COO(coords, data, shape=(n, m, k))
+            self.unhyperreduce_and_reshape = np.zeros((n, m, k))
+            self.unhyperreduce_and_reshape[tuple(coords)] = data
             del data
             del coords
             del unhyperreduce
             
             # Create reconstruction matrices
             if should_print: print('Computing qp...')
-            self.qp = sparse.einsum('ijk,k->ij', self.unhyperreduce_and_reshape.T, np.ones(self.n_particles), optimize=True).T.todense()
+            qp = (-const.q_electron*self.weight_factor/self.dx**3)*self.unhyperreduce_and_reshape.sum(axis=0)
+            self.ep = self.electric_field_matrix @ qp
+            self.bg_e_field = self.electric_field_matrix @ self.background_charge_density
             if should_print: print('Computing ne_to_pe...')
             self.ne_to_pe = np.zeros((n_particle_modes, self.n_nodes, n_hyperreduction_points*self.n_nodes))
-            for j in range(self.unhyperreduce_and_reshape.shape[1]):
-                self.ne_to_pe[:, j, :] = self.psi_pv.T @ self.unhyperreduce_and_reshape[:, j, :].tocsr()
+            for j in range(self.n_nodes):
+                self.ne_to_pe[:, j, :] = self.psi_pv.T @ self.unhyperreduce_and_reshape[:, j, :]
             self.n_hyperreduction_points = n_hyperreduction_points
         else:
             self.n_idx_tiling = np.tile([-1, 0, 1], self.n_particles)
             self.p_idx = np.repeat(np.arange(self.n_particles), 3)
         
     def save_snapshot(self):
-        self.snapshots.append(Snapshot(self.time, self.shift_x_to_domain(self.psi_px @ self.px), self.psi_pv @ self.pv, self.nrho))
+        self.snapshots.append(Snapshot(self.time, self.shift_x_to_domain(self.psi_px @ self.px), self.psi_pv @ self.pv))
 
     def show_snapshots(self, fps=10, save_animation=False, filename='PIC_simulation', repeat=True, show_moments=True, show_cells=False):
         print('Generating animation...')
