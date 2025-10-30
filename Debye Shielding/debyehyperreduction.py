@@ -46,9 +46,10 @@ if __name__ == "__main__":
     )
     
     n_particle_modes = 50
-    n_hyperreduction_points = n_particle_modes
-    n_hyperreduction_modes = 4*n_hyperreduction_points
+    n_hyperreduction_points = 2*n_particle_modes
+    n_hyperreduction_modes = n_cells*n_hyperreduction_points
     pod_type = 'PSD'
     sim.run(n_particle_modes, n_hyperreduction_points, n_hyperreduction_modes, pod_type=pod_type)
     sim.show_snapshots(fps=15, save_animation=True,
-                       filename=f'{filename}_particle_rom_{pod_type}_{n_particle_modes}pm_{n_hyperreduction_points}hp', show_moments=False)
+                       filename=f'{filename}_particle_rom_{pod_type}_{n_particle_modes}pm{n_hyperreduction_points}hp{n_hyperreduction_modes}hm',
+                       show_moments=False)
