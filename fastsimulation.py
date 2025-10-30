@@ -9,13 +9,14 @@ from scipy.special import erf
 import scipy.fft as fft
 
 class Snapshot:
-    def __init__(self, time, px, pv, phi, e_field, interpolation):
+    def __init__(self, time, px, pv, pe, phi, ne, interpolation):
         self.time = time
         self.x = px
         self.v = pv
+        self.pe = pe
         self.phi = phi
-        self.e_field = e_field
-        self.interpolation = interpolation.tocoo()
+        self.ne = ne
+        self.interpolation = interpolation
 
 class Simulation:
     def __init__(self,
@@ -138,7 +139,7 @@ class Simulation:
         print(f'Elapsed time: {time.perf_counter() - start:.4f} seconds')
 
     def save_snapshot(self):
-        self.snapshots.append(Snapshot(self.time, self.px.copy(), self.pv.copy(), self.phi_matrix @ self.nrho, self.ne_field, self.interpolation))
+        self.snapshots.append(Snapshot(self.time, self.px.copy(), self.pv.copy(), self.pe_field.copy(), self.phi_matrix @ self.nrho, self.ne_field, self.interpolation))
 
     def show_potential(self, n0, debye_length, fps=10, save_animation=False, filename='Electric_potential', repeat=True):
         print('Generating animation...')
@@ -308,8 +309,8 @@ class Simulation:
         particle_list = []
         node_list = []
         for s in self.snapshots:
-            particle_list.append(np.concat((s.x, s.v)))
-            node_list.append(s.e_field)
+            particle_list.append(np.concat((s.x, s.v, s.pe)))
+            node_list.append(s.ne)
         particle_array = np.column_stack(particle_list)
         node_array = np.column_stack(node_list)
         interpolation_array = sparse.hstack([s.interpolation for s in self.snapshots])
