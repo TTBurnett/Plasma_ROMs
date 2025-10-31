@@ -104,7 +104,7 @@ class RomSimulation:
         n_idx %= self.n_nodes
         interp_vals = spline(self.get_distance(x[self.p_idx], self.node_positions[n_idx])/self.dx)
         if self.should_hyperreduce:
-            interpolation = np.zeros(self.n_nodes, self.n_hyperreduction_points)
+            interpolation = np.zeros((self.n_nodes, self.n_hyperreduction_points))
             interpolation[n_idx, self.p_idx] = interp_vals
             return interpolation
         return scisparse.csr_array((interp_vals, (n_idx, self.p_idx)), shape=(self.n_nodes, self.n_particles))
@@ -149,11 +149,11 @@ class RomSimulation:
         self.accelerate_particles()
         self.time += self.dt
 
-    def run(self, n_particle_modes, n_hyperreduction_points, n_hyperreduction_modes, pod_type: Literal['POD', 'PSD', 'Full'] = 'POD', save_snapshots=True):
+    def run(self, n_particle_modes, n_hyperreduction_points, n_interpolation_modes, n_pe_field_modes, pod_type: Literal['POD', 'PSD', 'Full'] = 'POD', save_snapshots=True):
         
         # Setup
-        self.setup_rom(n_particle_modes, pod_type)
-        self.setup_hyperreduction(n_hyperreduction_points, n_hyperreduction_modes)
+        self.setup_rom(n_particle_modes, n_hyperreduction_points, pod_type)
+        self.setup_hyperreduction(n_hyperreduction_points, n_interpolation_modes, n_pe_field_modes)
 
         # Take initial condition snapshot
         self.interpolate_particles_to_field()
@@ -170,17 +170,20 @@ class RomSimulation:
                     self.save_snapshot()
         print(f'Elapsed time: {time.perf_counter() - start:.4f} seconds')
         
-    def setup_rom(self, n_particle_modes, pod_type):
+    def setup_rom(self, n_particle_modes, n_hyperreduction_points, pod_type):
         match(pod_type):
             case 'POD':
-                self.psi_px = romtools.get_pod_basis(self.px_snapshots, n_modes=n_particle_modes)
+                self.u_px = romtools.get_pod_basis(self.px_snapshots, n_modes=max(n_particle_modes, n_hyperreduction_points))
+                self.psi_px = self.u_px[:, :n_particle_modes]
                 self.psi_pv = romtools.get_pod_basis(self.pv_snapshots, n_modes=n_particle_modes)
                 self.v_to_x = self.psi_px.T @ self.psi_pv
             case 'PSD':
-                self.psi_px = romtools.get_basis_for_all(n_particle_modes, self.px_snapshots, self.pv_snapshots)
+                self.u_px = romtools.get_basis_for_all(max(n_particle_modes, n_hyperreduction_points), self.px_snapshots, self.pv_snapshots)
+                self.psi_px = self.u_px[:, :n_particle_modes]
                 self.psi_pv = self.psi_px
                 self.v_to_x = np.identity(self.psi_px.shape[1])
             case 'Full':
+                self.u_px = np.identity(self.n_particles)
                 self.psi_px = np.identity(self.n_particles)
                 self.psi_pv = np.identity(self.n_particles)
                 self.v_to_x = np.identity(self.psi_px.shape[1])
@@ -209,7 +212,7 @@ class RomSimulation:
         B[-1, -2] = -1
         self.electric_field_matrix = -(0.5 / self.dx) * B @ self.inv_laplacian
         
-    def setup_hyperreduction(self, n_hyperreduction_points, n_hyperreduction_modes, should_print=True):
+    def setup_hyperreduction(self, n_hyperreduction_points, n_interpolation_modes, n_pe_field_modes, should_print=True):
         if should_print: print('Beginning hyperreduction...')
         if self.should_hyperreduce:
             if should_print: print('Loading interpolation matrices...')
@@ -217,14 +220,14 @@ class RomSimulation:
             blocks = np.hsplit(interpolations.todense(), self.n_snapshots)
             interpolation_snapshots = np.hstack([b.T.reshape(-1, 1, order='F') for b in blocks])
             if should_print: print('Computing SVD...')
-            psi_interpolation = romtools.get_pod_basis(interpolation_snapshots, n_modes=n_hyperreduction_modes)
+            psi_interpolation = romtools.get_pod_basis(interpolation_snapshots, n_modes=n_interpolation_modes)
             
             del interpolations
             del blocks
             del interpolation_snapshots
             
             if should_print: print('Finding interpolation measurement indices...')
-            self.measurement_idx = construct_measurments(max_idx=self.n_particles, n_hyperreduction_points=n_hyperreduction_points, hyperreduction_algorithm='DEIM', u=self.psi_px, should_print=should_print)
+            self.measurement_idx = construct_measurments(max_idx=self.n_particles, n_hyperreduction_points=n_hyperreduction_points, hyperreduction_algorithm='DEIM', u=self.u_px, should_print=should_print)
             self.n_idx_tiling = np.tile([-1, 0, 1], n_hyperreduction_points)
             self.p_idx = np.repeat(np.arange(n_hyperreduction_points), 3)
             
@@ -269,8 +272,8 @@ class RomSimulation:
             
             # Pe hyperreduction
             if should_print: print('Computing SVD of pe_field...')
-            psi_pe = romtools.get_pod_basis(self.pe_snapshots, n_modes=n_hyperreduction_modes)
-            self.pe_to_pv = (self.psi_pv.T @ psi_pe) @ np.linalg.inv(psi_pe[self.measurement_idx])
+            psi_pe = romtools.get_pod_basis(self.pe_snapshots, n_modes=n_pe_field_modes)
+            self.pe_to_pv = (self.psi_pv.T @ psi_pe) @ np.linalg.pinv(psi_pe[self.measurement_idx])
                 
             self.n_hyperreduction_points = n_hyperreduction_points
         else:
