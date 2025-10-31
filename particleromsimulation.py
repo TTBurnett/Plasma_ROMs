@@ -219,19 +219,28 @@ class RomSimulation:
             interpolations = scisparse.load_npz(self.interpolation_snapshot_file)
             blocks = np.hsplit(interpolations.todense(), self.n_snapshots)
             interpolation_snapshots = np.hstack([b.T.reshape(-1, 1, order='F') for b in blocks])
-            if should_print: print('Computing SVD...')
+            if should_print: print('Computing SVD of interpolations...')
             psi_interpolation = romtools.get_pod_basis(interpolation_snapshots, n_modes=n_interpolation_modes)
             
             del interpolations
             del blocks
             del interpolation_snapshots
             
-            if should_print: print('Finding interpolation measurement indices...')
-            self.measurement_idx = construct_measurments(max_idx=self.n_particles, n_hyperreduction_points=n_hyperreduction_points, hyperreduction_algorithm='DEIM', u=self.u_px, should_print=should_print)
-            self.n_idx_tiling = np.tile([-1, 0, 1], n_hyperreduction_points)
-            self.p_idx = np.repeat(np.arange(n_hyperreduction_points), 3)
+            # Pe hyperreduction
+            if should_print: print('Computing SVD of pe_field...')
+            u_pe = romtools.get_pod_basis(self.pe_snapshots, n_modes=max(n_hyperreduction_points, n_pe_field_modes))
+            psi_pe = u_pe[:, :n_pe_field_modes]
             
-            interpolation_measurement_idx = np.tile(self.measurement_idx, self.n_nodes) + np.repeat(np.arange(self.n_nodes) * self.n_particles, n_hyperreduction_points)
+            if should_print: print('Finding interpolation measurement indices...')
+            measurement_idx1 = construct_measurments(max_idx=self.n_particles, n_hyperreduction_points=n_hyperreduction_points, hyperreduction_algorithm='DEIM', u=self.u_px, should_print=should_print)
+            measurement_idx2 = construct_measurments(max_idx=self.n_particles, n_hyperreduction_points=n_hyperreduction_points, hyperreduction_algorithm='DEIM', u=u_pe, should_print=should_print)
+            self.measurement_idx = np.union1d(measurement_idx1, measurement_idx2)
+            self.n_hyperreduction_points = self.measurement_idx.shape[0]
+            
+            self.n_idx_tiling = np.tile([-1, 0, 1], self.n_hyperreduction_points)
+            self.p_idx = np.repeat(np.arange(self.n_hyperreduction_points), 3)
+            
+            interpolation_measurement_idx = np.tile(self.measurement_idx, self.n_nodes) + np.repeat(np.arange(self.n_nodes) * self.n_particles, self.n_hyperreduction_points)
             unhyperreduce = psi_interpolation @ np.linalg.pinv(psi_interpolation[interpolation_measurement_idx])
             del psi_interpolation
             
@@ -270,12 +279,8 @@ class RomSimulation:
             self.ep = self.electric_field_matrix @ qp
             self.bg_e_field = self.electric_field_matrix @ self.background_charge_density
             
-            # Pe hyperreduction
-            if should_print: print('Computing SVD of pe_field...')
-            psi_pe = romtools.get_pod_basis(self.pe_snapshots, n_modes=n_pe_field_modes)
+            if should_print: print('Computing pe_to_pv...')
             self.pe_to_pv = (self.psi_pv.T @ psi_pe) @ np.linalg.pinv(psi_pe[self.measurement_idx])
-                
-            self.n_hyperreduction_points = n_hyperreduction_points
         else:
             self.n_idx_tiling = np.tile([-1, 0, 1], self.n_particles)
             self.p_idx = np.repeat(np.arange(self.n_particles), 3)
