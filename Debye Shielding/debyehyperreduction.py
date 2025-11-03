@@ -45,10 +45,10 @@ if __name__ == "__main__":
         interpolation_snapshot_file=f'{filename}_interpolations.npz'
     )
     
-    n_particle_modes = 50
-    n_hyperreduction_points = 1000
-    n_interpolation_modes = 4*n_hyperreduction_points*n_cells
-    n_pe_field_modes = 4*n_hyperreduction_points
+    n_particle_modes = 80
+    n_hyperreduction_points = 100
+    n_interpolation_modes = int(0.9*n_hyperreduction_points*n_cells)
+    n_pe_field_modes = int(0.9*n_hyperreduction_points)
     pod_type = 'POD'
     sim.run(n_particle_modes, n_hyperreduction_points, n_interpolation_modes, n_pe_field_modes, pod_type=pod_type)
     sim.show_snapshots(fps=15, save_animation=True,

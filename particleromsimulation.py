@@ -237,6 +237,11 @@ class RomSimulation:
             self.measurement_idx = np.union1d(measurement_idx1, measurement_idx2)
             self.n_hyperreduction_points = self.measurement_idx.shape[0]
             
+            del u_pe
+            del self.u_px
+            del measurement_idx1
+            del measurement_idx2
+            
             self.n_idx_tiling = np.tile([-1, 0, 1], self.n_hyperreduction_points)
             self.p_idx = np.repeat(np.arange(self.n_hyperreduction_points), 3)
             
@@ -247,30 +252,7 @@ class RomSimulation:
             if should_print: print('Building unhyperreduction tensor...')
             n, m, k = self.n_particles, self.n_nodes, unhyperreduce.shape[1]
 
-            # Compute flattened row indices for each (i, j) pair
-            i, j = np.meshgrid(np.arange(n), np.arange(m), indexing='ij')  # shape (n, m)
-            r = i + n * j  # row index into unhyperreduce
-
-            # Gather the data directly using fancy indexing
-            # unhyperreduce[r, :] will have shape (n, m, k)
-            data = unhyperreduce[r, :]
-
-            # Build coordinates for sparse COO tensor
-            # Repeat i, j, p along k dimension to match data shape
-            p = np.arange(k)
-            I, J, P = np.broadcast_arrays(
-                i[:, :, None],
-                j[:, :, None],
-                p[None, None, :]
-            )
-
-            coords = np.vstack([I.ravel(), J.ravel(), P.ravel()])
-            data = data.ravel()
-
-            self.unhyperreduce_and_reshape = np.zeros((n, m, k))
-            self.unhyperreduce_and_reshape[tuple(coords)] = data
-            del data
-            del coords
+            self.unhyperreduce_and_reshape = unhyperreduce.reshape((n, m, k), order='F')
             del unhyperreduce
             
             # Create reconstruction matrices
