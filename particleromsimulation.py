@@ -10,8 +10,8 @@ import scipy.sparse as scisparse
 class Snapshot:
     def __init__(self, time, px, pv):
         self.time = time
-        self.x = px
-        self.v = pv
+        self.x = px.copy()
+        self.v = pv.copy()
 
 def spline(x_ref, order: int = 1):
     match order:
@@ -169,6 +169,9 @@ class RomSimulation:
                 if save_snapshots:
                     self.save_snapshot()
         print(f'Elapsed time: {time.perf_counter() - start:.4f} seconds')
+        print('Post processing snapshots...')
+        self.post_process_snapshots()
+        print('Done!')
         
     def setup_rom(self, n_particle_modes, n_hyperreduction_points, pod_type):
         match(pod_type):
@@ -245,11 +248,11 @@ class RomSimulation:
             self.n_idx_tiling = np.tile([-1, 0, 1], self.n_hyperreduction_points)
             self.p_idx = np.repeat(np.arange(self.n_hyperreduction_points), 3)
             
+            if should_print: print('Building unhyperreduction tensor...')
             interpolation_measurement_idx = np.tile(self.measurement_idx, self.n_nodes) + np.repeat(np.arange(self.n_nodes) * self.n_particles, self.n_hyperreduction_points)
             unhyperreduce = psi_interpolation @ np.linalg.pinv(psi_interpolation[interpolation_measurement_idx])
             del psi_interpolation
             
-            if should_print: print('Building unhyperreduction tensor...')
             n, m, k = self.n_particles, self.n_nodes, unhyperreduce.shape[1]
 
             self.unhyperreduce_and_reshape = unhyperreduce.reshape((n, m, k), order='F')
@@ -268,7 +271,17 @@ class RomSimulation:
             self.p_idx = np.repeat(np.arange(self.n_particles), 3)
         
     def save_snapshot(self):
-        self.snapshots.append(Snapshot(self.time, self.shift_x_to_domain(self.psi_px @ self.px), self.psi_pv @ self.pv))
+        self.snapshots.append(Snapshot(self.time, self.px, self.pv))
+        
+    def post_process_snapshots(self):
+        self.n_idx_tiling = np.tile([-1, 0, 1], self.n_particles)
+        self.p_idx = np.repeat(np.arange(self.n_particles), 3)
+        self.should_hyperreduce = False
+        for s in self.snapshots:
+            s.x = self.shift_x_to_domain(self.psi_px @ s.x)
+            s.v = self.psi_pv @ s.v
+            interpolation = self.get_interpolation_matrix(s.x)
+            s.nrho = (-const.q_electron*self.weight_factor/self.dx**3)*interpolation.sum(axis=1) + self.background_charge_density
 
     def show_snapshots(self, fps=10, save_animation=False, filename='PIC_simulation', repeat=True, show_moments=True, show_cells=False):
         print('Generating animation...')
@@ -399,7 +412,7 @@ class RomSimulation:
         plt.yscale('log')
         plt.show()
 
-    def show_statistics(self):
+    def show_energy(self, filename=None):
         n = len(self.snapshots)
         kinetic_energy = np.zeros(n)
         electric_potential_energy = np.zeros(n)
@@ -419,4 +432,8 @@ class RomSimulation:
         plt.title('Energy vs. Time')
         plt.xlabel('Time (s)')
         plt.ylabel('Energy (J)')
+        
+        if filename != None:
+            plt.savefig(f'{filename}.png')
+            
         plt.show()
