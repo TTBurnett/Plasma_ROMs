@@ -28,7 +28,7 @@ if __name__ == "__main__":
 
     dt = 0.005*inv_w_pe
     end_time = dt*1e4
-    background_charge_density = lambda x: constants.q_electron * n0
+    background_charge_density = lambda x: constants.q_electron * n0 * np.ones_like(x)
 
     print('Loading snapshots...')
     filename = f'two_stream_{n_cells}c{n_particles_per_cell}ppc'
