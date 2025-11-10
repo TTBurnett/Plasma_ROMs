@@ -128,7 +128,8 @@ class RomSimulation:
 
     def update_electric_field(self):
         if self.should_hyperreduce:
-            self.ne_field = self.ep @ self.interpolation.reshape(-1) + self.bg_e_field
+            correction = np.dot(self.charge_sum, self.interpolation.reshape(-1))
+            self.ne_field = (self.ep @ self.interpolation.reshape(-1)) / correction + self.bg_e_field
         else:
             self.ne_field = self.electric_field_matrix @ self.nrho
 
@@ -260,8 +261,9 @@ class RomSimulation:
             
             # Create reconstruction matrices
             if should_print: print('Computing ep...')
-            qp = (-const.q_electron*self.weight_factor/self.dx**3)*self.unhyperreduce_and_reshape.sum(axis=0)
-            self.ep = self.electric_field_matrix @ qp
+            qp = self.unhyperreduce_and_reshape.sum(axis=0)
+            self.charge_sum = qp.sum(axis=0) / self.n_particles
+            self.ep = (-const.q_electron*self.weight_factor/self.dx**3)*(self.electric_field_matrix @ qp)
             self.bg_e_field = self.electric_field_matrix @ self.background_charge_density
             
             if should_print: print('Computing pe_to_pv...')
@@ -420,7 +422,7 @@ class RomSimulation:
         t = np.zeros(n)
         for i, s in enumerate(self.snapshots):
             electric_potential = self.inv_laplacian @ s.nrho
-            electric_potential_energy[i] = 0.5*np.sum(electric_potential*s.nrho)*self.dx**3
+            electric_potential_energy[i] = 0.5*np.dot(electric_potential, s.nrho)*self.dx**3
             kinetic_energy[i] = 0.5*const.m_electron*self.weight_factor*np.sum(s.v**2)
             total_energy[i] = electric_potential_energy[i] + kinetic_energy[i]
             t[i] = s.time
