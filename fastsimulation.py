@@ -9,12 +9,13 @@ from scipy.special import erf
 import scipy.fft as fft
 
 class Snapshot:
-    def __init__(self, time, px, pv, phi, e_field, interpolation):
+    def __init__(self, time, px, pv, pe_field, phi, ne_field, interpolation):
         self.time = time
         self.x = px
         self.v = pv
+        self.pe_field = pe_field
         self.phi = phi
-        self.e_field = e_field
+        self.ne_field = ne_field
         self.interpolation = interpolation.tocoo()
 
 class Simulation:
@@ -138,7 +139,7 @@ class Simulation:
         print(f'Elapsed time: {time.perf_counter() - start:.4f} seconds')
 
     def save_snapshot(self):
-        self.snapshots.append(Snapshot(self.time, self.px.copy(), self.pv.copy(), self.phi_matrix @ self.nrho, self.ne_field, self.interpolation))
+        self.snapshots.append(Snapshot(self.time, self.px.copy(), self.pv.copy(), self.pe_field.copy(), self.phi_matrix @ self.nrho, self.ne_field, self.interpolation))
 
     def show_potential(self, n0, debye_length, fps=10, save_animation=False, filename='Electric_potential', repeat=True):
         print('Generating animation...')
@@ -180,34 +181,34 @@ class Simulation:
     def show_electric_field(self, fps=10, save_animation=False, filename='Electric_field', repeat=True):
         print('Generating plot...')
         fig = plt.figure(figsize=(10, 5))
-        e_field = np.abs(np.array([fft.fft(s.e_field)[1] for s in self.snapshots]))
+        ne_field = np.abs(np.array([fft.fft(s.ne_field)[1] for s in self.snapshots]))
         time = np.array([s.time for s in self.snapshots])
-        plt.plot(time, e_field)
+        plt.plot(time, ne_field)
         plt.ylabel('Electric Field (N/C)')
         plt.xlabel('Time (s)')
         plt.yscale('log')
         
         # Determine maximum points
-        idx = np.array([i if e_field[i-1] < e_field[i] and e_field[i+1] < e_field[i] else 0 for i in range(1, e_field.shape[0]-1)])
+        idx = np.array([i if ne_field[i-1] < ne_field[i] and ne_field[i+1] < ne_field[i] else 0 for i in range(1, ne_field.shape[0]-1)])
         idx = idx[idx > 0]
         # Determine decay region
         decay_idx = [idx[0]]
         for i in range(1, idx.shape[0]):
-            if e_field[idx[i]] >= e_field[idx[i-1]]:
+            if ne_field[idx[i]] >= ne_field[idx[i-1]]:
                 break
             decay_idx.append(idx[i])
         decay_idx = np.array(decay_idx)
         # Determine growth region
         growth_idx = [decay_idx[-1]]
         for i in range(decay_idx.shape[0] , idx.shape[0]):
-            if e_field[idx[i]] <= e_field[idx[i-1]]:
+            if ne_field[idx[i]] <= ne_field[idx[i-1]]:
                 break
             growth_idx.append(idx[i])
         # Fit curves
-        log_decay = np.log(e_field[decay_idx])
+        log_decay = np.log(ne_field[decay_idx])
         gamma_decay, a = np.polyfit(time[decay_idx], log_decay, 1)
         decay_line = np.exp(gamma_decay * time[decay_idx] + a)
-        log_growth = np.log(e_field[growth_idx])
+        log_growth = np.log(ne_field[growth_idx])
         gamma_growth, a = np.polyfit(time[growth_idx], log_growth, 1)
         growth_line = np.exp(gamma_growth * time[growth_idx] + a)
         plt.plot(time[decay_idx], decay_line, color='r', linestyle='--', label=f'$\gamma$ = {gamma_decay:.3g}')
@@ -218,19 +219,19 @@ class Simulation:
         print('Generating animation...')
         fig = plt.figure(figsize=(10, 5))
         
-        max_e_field = np.array([s.e_field for s in self.snapshots]).max()
-        min_e_field = np.array([s.e_field for s in self.snapshots]).min()
-        e_field_domain = [min_e_field, max_e_field]
+        max_ne_field = np.array([s.ne_field for s in self.snapshots]).max()
+        min_ne_field = np.array([s.ne_field for s in self.snapshots]).min()
+        ne_field_domain = [min_ne_field, max_ne_field]
 
         def show(ts):
             t_idx, s = ts
 
             fig.clear()
-            plt.plot(self.node_positions, s.e_field)
+            plt.plot(self.node_positions, s.ne_field)
             plt.title(f'Time = {s.time: .3g}')
             plt.ylabel('Electric Field (N/C)')
             plt.xlabel('x (m)')
-            plt.ylim(*e_field_domain)
+            plt.ylim(*ne_field_domain)
             plt.xlim(self.x_domain)
 
         show((0, self.snapshots[0]))
@@ -308,8 +309,8 @@ class Simulation:
         particle_list = []
         node_list = []
         for s in self.snapshots:
-            particle_list.append(np.concat((s.x, s.v)))
-            node_list.append(s.e_field)
+            particle_list.append(np.concat((s.x, s.v, s.pe_field)))
+            node_list.append(s.ne_field)
         particle_array = np.column_stack(particle_list)
         node_array = np.column_stack(node_list)
         interpolation_array = sparse.hstack([s.interpolation for s in self.snapshots])
