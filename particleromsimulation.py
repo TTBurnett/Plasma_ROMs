@@ -24,6 +24,15 @@ def spline(x_ref, order: int = 1):
         case _:
             raise ValueError(f'Invalid spline order {order}. [0, 1] are supported.')
         
+def spline_derivative(x):
+    x_ref = np.abs(x)
+    sign = np.sign(x)
+    cond1 = (x_ref <= 0.5)
+    cond2 = (x_ref > 0.5) & (x_ref < 1.5)
+    term1 = -2.0 * x
+    term2 = -(1.5 - x_ref) * sign
+    return np.where(cond1, term1, np.where(cond2, term2, 0.0))
+        
 def construct_measurments(max_idx, n_hyperreduction_points, hyperreduction_algorithm: Literal['Gappy', 'DEIM'], u, should_print=True):
     match hyperreduction_algorithm:
         case 'Gappy':
@@ -119,34 +128,36 @@ class RomSimulation:
     def push_particles(self):
         self.px += self.v_to_x @ (self.pv*self.dt)
 
-    def interpolate_particles_to_field(self):
-        if self.should_hyperreduce:
-            self.interpolation = self.get_interpolation_matrix(self.psi_px[self.measurement_idx] @ self.px)
-        else:
-            self.interpolation = self.get_interpolation_matrix(self.psi_px @ self.px)
-            self.nrho = (-const.q_electron*self.weight_factor/self.dx**3)*self.interpolation.sum(axis=1) + self.background_charge_density
+    def get_wdw(self):
+        a_dot_x = self.px_estimator @ self.px
+        a_dot_x_tiled = np.repeat(a_dot_x, self.n_nodes)
+        xn_tiled = np.tile(self.node_positions, self.n_hyperreduction_points)
+        diff = self.get_distance(a_dot_x_tiled, xn_tiled) / self.dx
+        B = spline(diff)
+        Bp = spline_derivative(diff)
+        w = self.unhyperreduce @ B
+        M = self.unhyperreduce * Bp
+        M_reshaped = M.reshape((self.n_nodes, self.n_hyperreduction_points, self.n_nodes))
+        M_summed = M_reshaped.sum(axis=2)
+        dw = M_summed @ self.px_estimator
+        return w, dw
 
-    def update_electric_field(self):
-        if self.should_hyperreduce:
-            self.ne_field = self.ep @ self.interpolation + self.bg_e_field
-        else:
-            self.ne_field = self.electric_field_matrix @ self.nrho
-
-    def interpolate_field_to_particles(self):
-        if self.should_hyperreduce:
-            uninterpolate = self.ne_to_pe @ self.interpolation
-            self.pe_field = uninterpolate @ self.ne_field
-        else:
-            self.pe_field = self.interpolation.T @ self.ne_field
+    def get_dv(self):
+        w, dw = self.get_wdw()
+        # term1 = (dw.T @ self.inv_laplacian) @ w
+        # w_plus_2rho = w + 2 * self.background_charge_density
+        # L_dw = self.inv_laplacian @ dw
+        # term2 = w_plus_2rho @ L_dw
+        # dv = term1 + term2
+        # dv *= (-0.5 * self.dx**3 / const.m_electron)
+        dv = (-self.dx**3/const.m_electron) * dw.T @ self.inv_laplacian @ (w + self.background_charge_density)
+        return dv
         
     def accelerate_particles(self):
-        self.pv += -const.q_over_m*self.dt*self.pe_field
+        self.pv += self.dt*self.get_dv()
 
     def update(self):
         self.push_particles()
-        self.interpolate_particles_to_field()
-        self.update_electric_field()
-        self.interpolate_field_to_particles()
         self.accelerate_particles()
         self.time += self.dt
 
@@ -157,9 +168,6 @@ class RomSimulation:
         self.setup_hyperreduction(n_particle_modes, n_hyperreduction_points, n_hyperreduction_modes)
 
         # Take initial condition snapshot
-        self.interpolate_particles_to_field()
-        self.update_electric_field()
-        self.interpolate_field_to_particles()
         self.save_snapshot()
 
         start = time.perf_counter()
@@ -234,25 +242,16 @@ class RomSimulation:
             self.measurement_idx = construct_measurments(max_idx=self.n_particles, n_hyperreduction_points=n_hyperreduction_points, hyperreduction_algorithm='DEIM', u=self.u_px, should_print=should_print)
             self.n_idx_tiling = np.tile([-1, 0, 1], n_hyperreduction_points)
             self.p_idx = np.repeat(np.arange(n_hyperreduction_points), 3)
+            self.px_estimator = self.psi_px[self.measurement_idx]
             
             if should_print: print('Building unhyperreduction tensor...')
             interpolation_measurement_idx = np.tile(self.measurement_idx, self.n_nodes) + np.repeat(np.arange(self.n_nodes) * self.n_particles, n_hyperreduction_points)
             unhyperreduce = psi_interpolation @ np.linalg.pinv(psi_interpolation[interpolation_measurement_idx])
             del psi_interpolation
             
-            n, m, k = self.n_particles, self.n_nodes, unhyperreduce.shape[1]
-            self.unhyperreduce_and_reshape = unhyperreduce.reshape((n, m, k), order='F')
-            del unhyperreduce
+            uh_reshaped = unhyperreduce.reshape((self.n_nodes, self.n_particles, self.n_nodes * n_hyperreduction_points))
+            self.unhyperreduce = -const.q_electron/self.dx**3 * uh_reshaped.sum(axis=1)
             
-            # Create reconstruction matrices
-            if should_print: print('Computing qp...')
-            qp = (-const.q_electron*self.weight_factor/self.dx**3)*self.unhyperreduce_and_reshape.sum(axis=0)
-            self.ep = self.electric_field_matrix @ qp
-            self.bg_e_field = self.electric_field_matrix @ self.background_charge_density
-            if should_print: print('Computing ne_to_pe...')
-            self.ne_to_pe = np.zeros((n_particle_modes, self.n_nodes, n_hyperreduction_points*self.n_nodes))
-            for j in range(self.n_nodes):
-                self.ne_to_pe[:, j, :] = self.psi_pv.T @ self.unhyperreduce_and_reshape[:, j, :]
             self.n_hyperreduction_points = n_hyperreduction_points
         else:
             self.n_idx_tiling = np.tile([-1, 0, 1], self.n_particles)
