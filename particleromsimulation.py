@@ -129,27 +129,48 @@ class RomSimulation:
         self.px += self.v_to_x @ (self.pv*self.dt)
 
     def get_wdw(self):
+        """
+        Calculates w (charge density) and dw (its Jacobian)
+        This is the NEW, EFFICIENT, SPARSE version.
+        """
         a_dot_x = self.px_estimator @ self.px
-        a_dot_x_tiled = np.repeat(a_dot_x, self.n_nodes)
-        xn_tiled = np.tile(self.node_positions, self.n_hyperreduction_points)
-        diff = self.get_distance(a_dot_x_tiled, xn_tiled) / self.dx
-        B = spline(diff)
-        Bp = spline_derivative(diff)
-        w = self.unhyperreduce @ B
-        M = self.unhyperreduce * Bp
-        M_reshaped = M.reshape((self.n_nodes, self.n_hyperreduction_points, self.n_nodes))
-        M_summed = M_reshaped.sum(axis=2)
+        n_idx = np.repeat(((a_dot_x - self.x_domain[0]) % self.L) // self.dx, 3).astype(int) + self.n_idx_tiling
+        n_idx %= self.n_nodes
+        px_sparse = a_dot_x[self.p_idx]
+        nx_sparse = self.node_positions[n_idx]
+        px_domain = self.shift_x_to_domain(px_sparse)
+        u = px_domain - nx_sparse
+        u_abs = np.abs(u)
+        distance = 0.5*self.L - np.abs(u_abs - 0.5*self.L)
+        dist_deriv = -np.sign(u_abs - 0.5 * self.L) * np.sign(u)
+        diff = distance / self.dx
+        B_sparse_vals = spline(diff, self.particle_order)
+        Bp_sparse_vals = spline_derivative(diff) * dist_deriv / self.dx
+        flat_idx = self.p_idx * self.n_nodes + n_idx # shape (3h,)
+
+        w = self.unhyperreduce[:, flat_idx] @ B_sparse_vals
+        M_sparse = self.unhyperreduce[:, flat_idx] * Bp_sparse_vals
+        M_summed = np.zeros((self.n_nodes, self.n_hyperreduction_points))
+        np.add.at(M_summed, (slice(None), self.p_idx), M_sparse)
         dw = M_summed @ self.px_estimator
+        
         return w, dw
+    
+    def get_w(self, x):
+        a_dot_x = self.px_estimator @ self.psi_px.T @ x
+        n_idx = np.repeat(((a_dot_x - self.x_domain[0]) % self.L) // self.dx, 3).astype(int) + self.n_idx_tiling
+        n_idx %= self.n_nodes
+        px_sparse = a_dot_x[self.p_idx]
+        nx_sparse = self.node_positions[n_idx]
+        distance = self.get_distance(px_sparse, nx_sparse)
+        diff = distance / self.dx
+        B_sparse_vals = spline(diff, self.particle_order)
+        flat_idx = self.p_idx * self.n_nodes + n_idx
+        w = self.unhyperreduce[:, flat_idx] @ B_sparse_vals
+        return w
 
     def get_dv(self):
         w, dw = self.get_wdw()
-        # term1 = (dw.T @ self.inv_laplacian) @ w
-        # w_plus_2rho = w + 2 * self.background_charge_density
-        # L_dw = self.inv_laplacian @ dw
-        # term2 = w_plus_2rho @ L_dw
-        # dv = term1 + term2
-        # dv *= (-0.5 * self.dx**3 / const.m_electron)
         dv = (-self.dx**3/const.m_electron) * dw.T @ self.inv_laplacian @ (w + self.background_charge_density)
         return dv
         
@@ -269,6 +290,8 @@ class RomSimulation:
             s.v = self.psi_pv @ s.v
             interpolation = self.get_interpolation_matrix(s.x)
             s.nrho = (-const.q_electron*self.weight_factor/self.dx**3)*interpolation.sum(axis=1) + self.background_charge_density
+        self.n_idx_tiling = np.tile([-1, 0, 1], self.n_hyperreduction_points)
+        self.p_idx = np.repeat(np.arange(self.n_hyperreduction_points), 3)
 
     def show_snapshots(self, fps=10, save_animation=False, filename='PIC_simulation', repeat=True, show_moments=True, show_cells=False):
         print('Generating animation...')
@@ -324,8 +347,8 @@ class RomSimulation:
         ani = animation.FuncAnimation(fig=fig, func=show, frames=enumerate(self.snapshots), interval=1e3/fps, repeat=repeat)
         if save_animation:
             print('Saving...')
-            writer = animation.PillowWriter(fps=fps)
-            ani.save(f'{filename}.gif', writer=writer)
+            writer = animation.FFMpegWriter(fps=fps)
+            ani.save(f'{filename}.mp4', writer=writer)
         print('Displaying...')
         plt.show()
         print('Done!')
@@ -404,17 +427,20 @@ class RomSimulation:
         kinetic_energy = np.zeros(n)
         electric_potential_energy = np.zeros(n)
         total_energy = np.zeros(n)
+        rom_total_energy = np.zeros(n)
         t = np.zeros(n)
         for i, s in enumerate(self.snapshots):
             electric_potential = self.inv_laplacian @ s.nrho
             electric_potential_energy[i] = 0.5*np.sum(electric_potential*s.nrho)*self.dx**3
             kinetic_energy[i] = 0.5*const.m_electron*self.weight_factor*np.sum(s.v**2)
             total_energy[i] = electric_potential_energy[i] + kinetic_energy[i]
+            rom_total_energy[i] = self.get_hamiltonian(s.x, s.v)
             t[i] = s.time
 
         plt.plot(t, total_energy, label='Total Energy')
         plt.plot(t, electric_potential_energy, label='Electric Potential Energy', linestyle='--')
         plt.plot(t, kinetic_energy, label='Kinetic Energy', linestyle='--')
+        plt.plot(t, rom_total_energy, label='Rom Hamiltonian', linestyle=':')
         plt.legend()
         plt.title('Energy vs. Time')
         plt.xlabel('Time (s)')
@@ -424,3 +450,15 @@ class RomSimulation:
             plt.savefig(f'{filename}.png')
             
         plt.show()
+        
+    def get_hamiltonian(self, x, v):
+        """
+        Calculates the total Hamiltonian (energy).
+        Matches the C++ get_hamiltonian logic.
+        """
+        w = self.get_w(x)
+        rho = w + self.background_charge_density
+        U = 0.5 * self.dx**3 * (rho @ self.inv_laplacian @ rho)
+        K = 0.5 * self.mass * np.dot(v, v)
+        H = K + U
+        return H
