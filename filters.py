@@ -13,6 +13,9 @@ class SplineFilter:
     
     def __call__(self, x):
         return np.nan_to_num(self.coefficient * self.spline((x - self.offset) / self.width))
+    
+    def derivative(self, x):
+        return np.nan_to_num(self.coefficient * self.spline.derivative()((x - self.offset) / self.width))
 
 class SiacFilter:
     def __init__(self, n_moments: int, b_spline_order: int, width: float = 1.0):
@@ -39,6 +42,9 @@ class SiacFilter:
     
     def __call__(self, x):
         return sum(spline(x) for spline in self.splines)
+    
+    def derivative(self, x):
+        return sum(spline.derivative(x) for spline in self.splines)
 
 if __name__ == "__main__":
     plt.rcParams['figure.figsize'] = [10, 5]

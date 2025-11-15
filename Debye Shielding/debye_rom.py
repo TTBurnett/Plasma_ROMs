@@ -3,6 +3,7 @@ import sys
 sys.path.append('..')
 from particleromsimulation import RomSimulation
 import constants
+import filters
 
 if __name__ == "__main__":
     n_cells = 64
@@ -25,6 +26,7 @@ if __name__ == "__main__":
 
     dt = 0.005*inv_w_pe
     end_time = dt*1e4
+    particle_shape = filters.SiacFilter(6, 3)
 
     print('Loading snapshots...')
     filename = f'debye_shielding_{n_cells}c{n_particles_per_cell}ppc'

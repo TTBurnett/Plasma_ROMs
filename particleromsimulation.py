@@ -459,6 +459,6 @@ class RomSimulation:
         w = self.get_w(x)
         rho = w + self.background_charge_density
         U = 0.5 * self.dx**3 * (rho @ self.inv_laplacian @ rho)
-        K = 0.5 * self.mass * np.dot(v, v)
+        K = 0.5 * const.m_electron * np.dot(v, v)
         H = K + U
         return H
