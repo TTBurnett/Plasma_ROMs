@@ -300,7 +300,7 @@ class Simulation:
             print('Saving...')
             writer = animation.PillowWriter(fps=fps)
             ani.save(f'{filename}.gif', writer=writer)
-        print('Displaying...')
+        print('Displaying...') 
         plt.show()
         print('Done!')
 

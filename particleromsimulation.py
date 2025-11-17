@@ -12,26 +12,6 @@ class Snapshot:
         self.time = time
         self.x = px.copy()
         self.v = pv.copy()
-
-def spline(x_ref, order: int = 1):
-    match order:
-        case 0:
-            return np.where(x_ref < 1, 1 - x_ref, 0)
-        case 1:
-            conditions = [x_ref <= 0.5, x_ref < 1.5]
-            values = [0.75-x_ref**2, 0.5*(1.5-x_ref)**2]
-            return np.select(conditions, values, default=0)
-        case _:
-            raise ValueError(f'Invalid spline order {order}. [0, 1] are supported.')
-        
-def spline_derivative(x):
-    x_ref = np.abs(x)
-    sign = np.sign(x)
-    cond1 = (x_ref <= 0.5)
-    cond2 = (x_ref > 0.5) & (x_ref < 1.5)
-    term1 = -2.0 * x
-    term2 = -(1.5 - x_ref) * sign
-    return np.where(cond1, term1, np.where(cond2, term2, 0.0))
         
 def construct_measurments(max_idx, n_hyperreduction_points, hyperreduction_algorithm: Literal['Gappy', 'DEIM'], u, should_print=True):
     match hyperreduction_algorithm:
@@ -66,7 +46,7 @@ class RomSimulation:
                  dt, end_time,
                  x_domain, v_domain,
                  background_charge_density,
-                 particle_order = 1,
+                 particle_shape_function,
                  particle_weight_factor=1.0,
                  snapshot_interval = 10,
                  color_rule = None,
@@ -92,7 +72,7 @@ class RomSimulation:
             self.colors = color_rule(x0, v0)
         else:
             self.colors = np.array(['c' for x in x0])
-        self.particle_order = particle_order
+        self.shape_function = particle_shape_function
         self.weight_factor = particle_weight_factor
         self.background_charge_density = background_charge_density(self.node_positions)
         self.snapshot_interval = snapshot_interval
@@ -101,16 +81,16 @@ class RomSimulation:
     def get_moments(self, px, pv):
         moments = np.zeros((3, self.node_positions.shape[0]))
         x_ref = self.get_distance(px, self.node_positions.reshape(-1, 1))/self.dx
-        interpolation = spline(x_ref, self.particle_order)
+        interpolation = self.shape_function(x_ref)
         moments[0, :] = np.sum(interpolation, axis=1)*const.m_electron*self.weight_factor/self.dx
         moments[1, :] = (interpolation @ pv)*const.m_electron*self.weight_factor/self.dx
         moments[2, :] = (interpolation @ pv**2)*const.m_electron*self.weight_factor/self.dx
         return moments
     
     def get_interpolation_matrix(self, x):
-        n_idx = np.repeat(((x - self.x_domain[0]) % self.L) // self.dx, 3).astype(int) + self.n_idx_tiling
+        n_idx = np.repeat(((x - self.x_domain[0]) % self.L) // self.dx, self.shape_function_width).astype(int) + self.n_idx_tiling
         n_idx %= self.n_nodes
-        interp_vals = spline(self.get_distance(x[self.p_idx], self.node_positions[n_idx])/self.dx)
+        interp_vals = self.shape_function(self.get_distance(x[self.p_idx], self.node_positions[n_idx])/self.dx)
         if self.should_hyperreduce:
             interp_vector = np.zeros(self.n_nodes*self.n_hyperreduction_points)
             flat_idx = n_idx * self.n_hyperreduction_points + self.p_idx
@@ -134,7 +114,7 @@ class RomSimulation:
         This is the NEW, EFFICIENT, SPARSE version.
         """
         a_dot_x = self.px_estimator @ self.px
-        n_idx = np.repeat(((a_dot_x - self.x_domain[0]) % self.L) // self.dx, 3).astype(int) + self.n_idx_tiling
+        n_idx = np.repeat(((a_dot_x - self.x_domain[0]) % self.L) // self.dx, self.shape_function_width).astype(int) + self.n_idx_tiling
         n_idx %= self.n_nodes
         px_sparse = a_dot_x[self.p_idx]
         nx_sparse = self.node_positions[n_idx]
@@ -144,8 +124,8 @@ class RomSimulation:
         distance = 0.5*self.L - np.abs(u_abs - 0.5*self.L)
         dist_deriv = -np.sign(u_abs - 0.5 * self.L) * np.sign(u)
         diff = distance / self.dx
-        B_sparse_vals = spline(diff, self.particle_order)
-        Bp_sparse_vals = spline_derivative(diff) * dist_deriv / self.dx
+        B_sparse_vals = self.shape_function(diff)
+        Bp_sparse_vals = self.shape_function.derivative(diff) * dist_deriv / self.dx
         flat_idx = self.p_idx * self.n_nodes + n_idx # shape (3h,)
 
         w = self.unhyperreduce[:, flat_idx] @ B_sparse_vals
@@ -158,13 +138,13 @@ class RomSimulation:
     
     def get_w(self, x):
         a_dot_x = self.px_estimator @ self.psi_px.T @ x
-        n_idx = np.repeat(((a_dot_x - self.x_domain[0]) % self.L) // self.dx, 3).astype(int) + self.n_idx_tiling
+        n_idx = np.repeat(((a_dot_x - self.x_domain[0]) % self.L) // self.dx, self.shape_function_width).astype(int) + self.n_idx_tiling
         n_idx %= self.n_nodes
         px_sparse = a_dot_x[self.p_idx]
         nx_sparse = self.node_positions[n_idx]
         distance = self.get_distance(px_sparse, nx_sparse)
         diff = distance / self.dx
-        B_sparse_vals = spline(diff, self.particle_order)
+        B_sparse_vals = self.shape_function(diff)
         flat_idx = self.p_idx * self.n_nodes + n_idx
         w = self.unhyperreduce[:, flat_idx] @ B_sparse_vals
         return w
@@ -175,7 +155,7 @@ class RomSimulation:
         return dv
         
     def accelerate_particles(self):
-        self.pv += self.dt*self.get_dv()
+        self.pv += self.dt * self.x_to_v @ self.get_dv()
 
     def update(self):
         self.push_particles()
@@ -186,7 +166,7 @@ class RomSimulation:
         
         # Setup
         self.setup_rom(n_particle_modes, n_hyperreduction_points, pod_type)
-        self.setup_hyperreduction(n_particle_modes, n_hyperreduction_points, n_hyperreduction_modes)
+        self.setup_hyperreduction(n_hyperreduction_points, n_hyperreduction_modes)
 
         # Take initial condition snapshot
         self.save_snapshot()
@@ -210,16 +190,19 @@ class RomSimulation:
                 self.psi_px = self.u_px[:, :n_particle_modes]
                 self.psi_pv = romtools.get_pod_basis(self.pv_snapshots, n_modes=n_particle_modes)
                 self.v_to_x = self.psi_px.T @ self.psi_pv
+                self.x_to_v = self.psi_pv.T @ self.psi_px
             case 'PSD':
                 self.u_px = romtools.get_basis_for_all(max(n_particle_modes, n_hyperreduction_points), self.px_snapshots, self.pv_snapshots)
                 self.psi_px = self.u_px[:, :n_particle_modes]
                 self.psi_pv = self.psi_px
                 self.v_to_x = np.identity(self.psi_px.shape[1])
+                self.x_to_v = np.identity(self.psi_px.shape[1])
             case 'Full':
                 self.u_px = np.identity(self.n_particles)
                 self.psi_px = np.identity(self.n_particles)
                 self.psi_pv = np.identity(self.n_particles)
                 self.v_to_x = np.identity(self.psi_px.shape[1])
+                self.x_to_v = np.identity(self.psi_px.shape[1])
             case _:
                 raise ValueError(f'Invalid type "{pod_type}" for modal decomposition.')
             
@@ -245,7 +228,7 @@ class RomSimulation:
         B[-1, -2] = -1
         self.electric_field_matrix = -(0.5 / self.dx) * B @ self.inv_laplacian
         
-    def setup_hyperreduction(self, n_particle_modes, n_hyperreduction_points, n_hyperreduction_modes, should_print=True):
+    def setup_hyperreduction(self, n_hyperreduction_points, n_hyperreduction_modes, should_print=True):
         if should_print: print('Beginning hyperreduction...')
         if self.should_hyperreduce:
             if should_print: print('Loading interpolation matrices...')
@@ -261,8 +244,6 @@ class RomSimulation:
             
             if should_print: print('Finding measurement indices...')
             self.measurement_idx = construct_measurments(max_idx=self.n_particles, n_hyperreduction_points=n_hyperreduction_points, hyperreduction_algorithm='DEIM', u=self.u_px, should_print=should_print)
-            self.n_idx_tiling = np.tile([-1, 0, 1], n_hyperreduction_points)
-            self.p_idx = np.repeat(np.arange(n_hyperreduction_points), 3)
             self.px_estimator = self.psi_px[self.measurement_idx]
             
             if should_print: print('Building unhyperreduction tensor...')
@@ -271,27 +252,40 @@ class RomSimulation:
             del psi_interpolation
             
             uh_reshaped = unhyperreduce.reshape((self.n_nodes, self.n_particles, self.n_nodes * n_hyperreduction_points))
-            self.unhyperreduce = -const.q_electron/self.dx**3 * uh_reshaped.sum(axis=1)
+            self.unhyperreduce = -const.q_electron*self.weight_factor/self.dx**3 * uh_reshaped.sum(axis=1)
             
+            y1 = self.shape_function(np.arange(-100, 101))
+            y2 = self.shape_function(np.arange(-100.5, 101))
+            width = max(np.sum(np.abs(y1) > 0), np.sum(np.abs(y2) > 0))
+            relative_n_idx = np.arange(-(width//2), width//2 + 1, dtype=int)
+            self.shape_function_width = relative_n_idx.shape[0]
+            self.n_idx_tiling = np.tile(relative_n_idx, n_hyperreduction_points)
+            self.p_idx = np.repeat(range(n_hyperreduction_points), self.shape_function_width)
             self.n_hyperreduction_points = n_hyperreduction_points
         else:
-            self.n_idx_tiling = np.tile([-1, 0, 1], self.n_particles)
-            self.p_idx = np.repeat(np.arange(self.n_particles), 3)
+            y1 = self.shape_function(np.arange(-100, 101))
+            y2 = self.shape_function(np.arange(-100.5, 101))
+            width = max(np.sum(np.abs(y1) > 0), np.sum(np.abs(y2) > 0))
+            relative_n_idx = np.arange(-(width//2), width//2 + 1, dtype=int)
+            self.shape_function_width = relative_n_idx.shape[0]
+            self.n_idx_tiling = np.tile(relative_n_idx, self.n_particles)
+            self.p_idx = np.repeat(range(self.n_particles), self.shape_function_width)
+            self.n_hyperreduction_points = self.n_particles
         
     def save_snapshot(self):
         self.snapshots.append(Snapshot(self.time, self.px, self.pv))
         
     def post_process_snapshots(self):
-        self.n_idx_tiling = np.tile([-1, 0, 1], self.n_particles)
-        self.p_idx = np.repeat(np.arange(self.n_particles), 3)
+        self.n_idx_tiling = np.tile(self.n_idx_tiling[:self.shape_function_width], self.n_particles)
+        self.p_idx = np.repeat(np.arange(self.n_particles), self.shape_function_width)
         self.should_hyperreduce = False
         for s in self.snapshots:
             s.x = self.shift_x_to_domain(self.psi_px @ s.x)
             s.v = self.psi_pv @ s.v
             interpolation = self.get_interpolation_matrix(s.x)
             s.nrho = (-const.q_electron*self.weight_factor/self.dx**3)*interpolation.sum(axis=1) + self.background_charge_density
-        self.n_idx_tiling = np.tile([-1, 0, 1], self.n_hyperreduction_points)
-        self.p_idx = np.repeat(np.arange(self.n_hyperreduction_points), 3)
+        self.n_idx_tiling = np.tile(self.n_idx_tiling[:self.shape_function_width], self.n_hyperreduction_points)
+        self.p_idx = np.repeat(np.arange(self.n_hyperreduction_points), self.shape_function_width)
 
     def show_snapshots(self, fps=10, save_animation=False, filename='PIC_simulation', repeat=True, show_moments=True, show_cells=False):
         print('Generating animation...')
@@ -347,8 +341,8 @@ class RomSimulation:
         ani = animation.FuncAnimation(fig=fig, func=show, frames=enumerate(self.snapshots), interval=1e3/fps, repeat=repeat)
         if save_animation:
             print('Saving...')
-            writer = animation.FFMpegWriter(fps=fps)
-            ani.save(f'{filename}.mp4', writer=writer)
+            writer = animation.PillowWriter(fps=fps)
+            ani.save(f'{filename}.gif', writer=writer)
         print('Displaying...')
         plt.show()
         print('Done!')

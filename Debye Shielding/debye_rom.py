@@ -26,7 +26,7 @@ if __name__ == "__main__":
 
     dt = 0.005*inv_w_pe
     end_time = dt*1e4
-    particle_shape = filters.SiacFilter(6, 3)
+    particle_shape_function = filters.SplineFilter(4)
 
     print('Loading snapshots...')
     filename = f'debye_shielding_{n_cells}c{n_particles_per_cell}ppc'
@@ -42,8 +42,8 @@ if __name__ == "__main__":
         v_domain=(-10*v_T, 10*v_T),
         background_charge_density=background_charge_density,
         particle_weight_factor=weight_factor,
-        particle_order=1,
-        snapshot_interval=10,
+        particle_shape_function=particle_shape_function,
+        snapshot_interval=15,
         interpolation_snapshot_file=f'{filename}_interpolations.npz'
     )
     
@@ -53,5 +53,5 @@ if __name__ == "__main__":
     pod_type = 'PSD'
     sim.run(n_particle_modes, n_hyperreduction_points, n_hyperreduction_modes, pod_type=pod_type)
     sim.show_energy(filename=f'{filename}_energy')
-    sim.show_snapshots(fps=15, save_animation=True,
+    sim.show_snapshots(fps=10, save_animation=True,
                        filename=f'{filename}_particle_rom_{pod_type}_{n_particle_modes}pm_{n_hyperreduction_points}hp', show_moments=False)

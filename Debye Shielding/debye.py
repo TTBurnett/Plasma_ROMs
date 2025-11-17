@@ -26,7 +26,7 @@ if __name__ == "__main__":
 
     dt = 0.005*inv_w_pe
     end_time = dt*1e4
-    shape = filters.SplineFilter(3)
+    shape = filters.SplineFilter(4)
     
     sim = Simulation(
         n_nodes=n_cells,
