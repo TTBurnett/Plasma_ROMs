@@ -151,7 +151,7 @@ class RomSimulation:
 
     def get_dv(self):
         w, dw = self.get_wdw()
-        dv = (-self.dx**3/const.m_electron) * dw.T @ self.inv_laplacian @ (w + self.background_charge_density)
+        dv = (-self.dx**3/(const.m_electron*self.weight_factor)) * dw.T @ self.inv_laplacian @ (w + self.background_charge_density)
         return dv
         
     def accelerate_particles(self):
