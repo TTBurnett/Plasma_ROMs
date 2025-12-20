@@ -28,7 +28,7 @@ if __name__ == "__main__":
 
     dt = 0.005*inv_w_pe
     end_time = dt*1e4
-    background_charge_density = lambda x: constants.q_electron * n0 * np.ones_like(x)
+    external_electric_field = lambda x: np.zeros_like(x)
 
     print('Loading snapshots...')
     filename = f'two_stream_{n_cells}c{n_particles_per_cell}ppc'
@@ -42,7 +42,7 @@ if __name__ == "__main__":
         dt=dt, end_time=end_time,
         x_domain=(-max_x, max_x),
         v_domain=(-max_v, max_v),
-        background_charge_density=background_charge_density,
+        external_electric_field=external_electric_field,
         particle_weight_factor=weight_factor,
         particle_order=1,
         snapshot_interval=15,

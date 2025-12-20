@@ -29,7 +29,7 @@ if __name__ == "__main__":
 
     dt = 0.005*inv_w_pe
     end_time = dt*1e4
-    background_charge_density = lambda x: constants.q_electron * n0
+    external_electric_field = lambda x: 0
     shape = filters.SplineFilter(3)
     
     sim = Simulation(
@@ -41,7 +41,7 @@ if __name__ == "__main__":
         f0=f,
         x_domain=(-max_x, max_x),
         v_domain=(-max_v, max_v),
-        background_charge_density=background_charge_density,
+        external_electric_field=external_electric_field,
         snapshot_interval=15,
         color_rule=color_rule
     )

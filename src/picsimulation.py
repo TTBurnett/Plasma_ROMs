@@ -23,7 +23,7 @@ class Simulation:
                  n_nodes, n_particles_per_cell,
                  dt, end_time,
                  f0, x_domain, v_domain,
-                 background_charge_density,
+                 external_electric_field,
                  particle_weight_factor,
                  particle_shape_function,
                  snapshot_interval = 10,
@@ -45,7 +45,7 @@ class Simulation:
         self.weight_factor = particle_weight_factor
         self.shape_function = particle_shape_function
         self.node_positions = np.arange(x_domain[0]+0.5*self.dx, x_domain[1], self.dx)
-        self.bg_charge_density = background_charge_density(self.node_positions)
+        self.external_electric_field = external_electric_field(self.node_positions)
         self.snapshot_interval = snapshot_interval
         self.snapshots = []
 
@@ -76,10 +76,10 @@ class Simulation:
 
     def interpolate_particles_to_field(self):
         self.interpolation = self.get_interpolation_matrix(self.px)
-        self.nrho = -const.q_electron*self.weight_factor*self.interpolation.sum(axis=1)/self.dx**3 + self.bg_charge_density
+        self.nrho = -const.q_electron*self.weight_factor*self.interpolation.sum(axis=1)/self.dx**3
 
     def update_electric_field(self):
-        self.ne_field = self.electric_field_matrix @ self.nrho
+        self.ne_field = self.electric_field_matrix @ self.nrho + self.external_electric_field
 
     def interpolate_field_to_particles(self):
         self.pe_field = self.interpolation.T @ self.ne_field

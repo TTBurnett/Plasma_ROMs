@@ -56,7 +56,7 @@ class RomSimulation:
                  node_positions,
                  dt, end_time,
                  x_domain, v_domain,
-                 background_charge_density,
+                 external_electric_field,
                  particle_order = 1,
                  particle_weight_factor=1.0,
                  snapshot_interval = 10,
@@ -86,7 +86,7 @@ class RomSimulation:
             self.colors = np.array(['c' for x in x0])
         self.particle_order = particle_order
         self.weight_factor = particle_weight_factor
-        self.background_charge_density = background_charge_density(self.node_positions)
+        self.external_electric_field = external_electric_field(self.node_positions)
         self.snapshot_interval = snapshot_interval
         self.snapshots = []
 
@@ -124,13 +124,13 @@ class RomSimulation:
             self.interpolation = self.get_interpolation_matrix(self.psi_px[self.measurement_idx] @ self.px)
         else:
             self.interpolation = self.get_interpolation_matrix(self.psi_px @ self.px)
-            self.nrho = (-const.q_electron*self.weight_factor/self.dx**3)*self.interpolation.sum(axis=1) + self.background_charge_density
+            self.nrho = (-const.q_electron*self.weight_factor/self.dx**3)*self.interpolation.sum(axis=1)
 
     def update_electric_field(self):
         if self.should_hyperreduce:
-            self.ne_field = self.ep @ self.interpolation.reshape(-1) + self.bg_e_field
+            self.ne_field = self.ep @ self.interpolation.reshape(-1) + self.external_electric_field
         else:
-            self.ne_field = self.electric_field_matrix @ self.nrho
+            self.ne_field = self.electric_field_matrix @ self.nrho + self.external_electric_field
 
     def interpolate_field_to_particles(self):
         if self.should_hyperreduce:
@@ -262,7 +262,6 @@ class RomSimulation:
             if should_print: print('Computing ep...')
             qp = (-const.q_electron*self.weight_factor/self.dx**3)*self.unhyperreduce_and_reshape.sum(axis=0)
             self.ep = self.electric_field_matrix @ qp
-            self.bg_e_field = self.electric_field_matrix @ self.background_charge_density
             
             if should_print: print('Computing pe_to_pv...')
             self.pe_to_pv = (self.psi_pv.T @ psi_pe) @ np.linalg.pinv(psi_pe[self.measurement_idx])
@@ -281,7 +280,7 @@ class RomSimulation:
             s.x = self.shift_x_to_domain(self.psi_px @ s.x)
             s.v = self.psi_pv @ s.v
             interpolation = self.get_interpolation_matrix(s.x)
-            s.nrho = (-const.q_electron*self.weight_factor/self.dx**3)*interpolation.sum(axis=1) + self.background_charge_density
+            s.nrho = (-const.q_electron*self.weight_factor/self.dx**3)*interpolation.sum(axis=1)
 
     def show_snapshots(self, fps=10, save_animation=False, filename='PIC_simulation', repeat=True, show_moments=True, show_cells=False):
         print('Generating animation...')
